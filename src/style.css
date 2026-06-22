@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+  body {
+    background: #fff;
+  }
+  /* Let the plan and tables flow onto the page without inner scrollbars. */
+  .max-h-72 {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}
