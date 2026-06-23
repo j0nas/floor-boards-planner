@@ -119,3 +119,65 @@ describe("polyLayout — clip-to-outline", () => {
     expect(p.diagnostics.some((d) => d.code === "piece.sliver")).toBe(true);
   });
 });
+
+describe("polyLayout — stagger is honoured on a stepped custom shape", () => {
+  // Field-reported regression: boards 2200 mm long run along X; a step in the far
+  // wall makes the upper rows (run 2780) shorter than the lower rows (run 3200).
+  // The old fixed start schedule let a rebalanced tail (734 | 1233 | 1233) drop a
+  // seam at 1967 — only 233 mm from the next row's seam at 2200 — while still
+  // reporting a healthy 733 mm stagger. minStagger is 500 mm here.
+  const STEP_ROOM: RoomShape = {
+    outline: [
+      { x: 0, y: 0 },
+      { x: 3220, y: 0 },
+      { x: 3220, y: 2080 },
+      { x: 2800, y: 2080 },
+      { x: 2800, y: 2680 },
+      { x: 0, y: 2680 },
+    ],
+  };
+  const inputs = (() => {
+    const i = structuredClone(DEFAULT_INPUTS);
+    i.room = STEP_ROOM;
+    i.board = { length: 2200, width: 190, thickness: 8 };
+    i.gap = { near: 10, far: 10, left: 10, right: 10 };
+    i.tunables = { ...i.tunables, minStagger: 500 };
+    return i;
+  })();
+  const plan = buildPolygonPlan(inputs, "X")!;
+
+  // Independently reconstruct each row's interior butt joints from the laid
+  // pieces (each row spans X contiguously here, so a non-extreme piece boundary
+  // is a real seam), then measure the closest joint between adjacent rows.
+  function minAdjacentSeamGap(): number {
+    const byRow = new Map<number, { min: number; max: number; bounds: Set<number> }>();
+    for (const p of plan.pieces) {
+      const xs = p.poly.map((q) => q.x);
+      const lo = Math.min(...xs);
+      const hi = Math.max(...xs);
+      const r = byRow.get(p.rowIndex) ?? { min: Infinity, max: -Infinity, bounds: new Set<number>() };
+      r.min = Math.min(r.min, lo);
+      r.max = Math.max(r.max, hi);
+      r.bounds.add(Math.round(lo));
+      r.bounds.add(Math.round(hi));
+      byRow.set(p.rowIndex, r);
+    }
+    const seams = [...byRow.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, r]) => [...r.bounds].filter((b) => b - r.min > 1 && r.max - b > 1).sort((a, b) => a - b));
+    let mn = Number.POSITIVE_INFINITY;
+    for (let k = 0; k + 1 < seams.length; k++)
+      for (const a of seams[k]!) for (const b of seams[k + 1]!) mn = Math.min(mn, Math.abs(a - b));
+    return mn;
+  }
+
+  test("every adjacent-row butt joint clears the 500 mm minimum", () => {
+    expect(minAdjacentSeamGap()).toBeGreaterThanOrEqual(500 - 1);
+  });
+
+  test("the plan reports the true stagger, stays valid, and raises no stagger warning", () => {
+    expect(plan.stagger.minObservedStagger).toBeGreaterThanOrEqual(500 - 0.5);
+    expect(plan.valid).toBe(true);
+    expect(plan.diagnostics.some((d) => d.code === "stagger.belowMin")).toBe(false);
+  });
+});

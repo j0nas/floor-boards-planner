@@ -32,9 +32,7 @@ import type {
   Point,
   StaggerInfo,
 } from "./types.ts";
-import { EPS, type Mm, approxEq } from "./units.ts";
-
-const PHASES = 3; // staggered start offsets cycle through bl/3 steps
+import { EPS, type Mm, approxEq, gte } from "./units.ts";
 
 interface Box {
   minX: number;
@@ -108,6 +106,88 @@ function runSegments(span: Mm, bl: Mm, startLen: Mm, minPiece: Mm): Mm[] {
   return ls;
 }
 
+/** Min distance between two interior-seam sets (absolute run coords); ∞ if either is empty. */
+function seamGap(a: readonly number[], b: readonly number[]): number {
+  if (!a.length || !b.length) return Number.POSITIVE_INFINITY;
+  let mn = Number.POSITIVE_INFINITY;
+  for (const x of a) for (const y of b) mn = Math.min(mn, Math.abs(x - y));
+  return mn;
+}
+
+/** Run-direction segment lengths (per coverage span) and the absolute interior seams they produce. */
+function rowTiling(
+  spans: readonly { min: Mm; max: Mm }[],
+  bl: Mm,
+  startLen: Mm,
+  minPiece: Mm,
+): { perSpan: Mm[][]; seams: number[] } {
+  const perSpan: Mm[][] = [];
+  const seams: number[] = [];
+  for (const span of spans) {
+    const segs = runSegments(span.max - span.min, bl, startLen, minPiece);
+    perSpan.push(segs);
+    let acc = span.min;
+    for (let i = 0; i < segs.length - 1; i++) {
+      acc += segs[i]!;
+      seams.push(acc);
+    }
+  }
+  return { perSpan, seams };
+}
+
+/**
+ * Choose a row's start-piece length so its seams clear the rows already laid,
+ * validated on the ACTUAL seam positions (rebalanced tail and all) rather than a
+ * generating offset — the bug the fixed schedule had was that a rebalanced tail
+ * could drop a seam a quarter-board from its neighbour while the plan still
+ * claimed a healthy stagger.
+ *
+ * The search saturates each clearance at `minStagger` (once a row is far enough
+ * it stops competing) and is lexicographic: clear the immediately adjacent row
+ * first, then the skip row (avoids the every-other-row ladder), then maximise the
+ * overall spread.
+ */
+function chooseRowStart(
+  spans: readonly { min: Mm; max: Mm }[],
+  prev: readonly number[],
+  prev2: readonly number[],
+  bl: Mm,
+  minPiece: Mm,
+  minStagger: Mm,
+): { startLen: Mm; seams: number[]; perSpan: Mm[][]; gapPrev: number } {
+  // Candidate starts: a full-board start (no leading cut), plus a fine sweep over
+  // the legal start-piece range — fine enough to resolve a ~minStagger window.
+  const candidates: Mm[] = [bl];
+  const steps = 64;
+  for (let i = 0; i <= steps; i++) candidates.push(minPiece + ((bl - minPiece) * i) / steps);
+
+  let best: { startLen: Mm; seams: number[]; perSpan: Mm[][]; gapPrev: number } | null = null;
+  let bestKey: readonly [number, number, number] | null = null;
+  for (const startLen of candidates) {
+    const { perSpan, seams } = rowTiling(spans, bl, startLen, minPiece);
+    const gapPrev = seamGap(seams, prev);
+    const gapPrev2 = seamGap(seams, prev2);
+    // Tertiary objective: maximise the true smallest clearance, which centres the
+    // row within its feasible band instead of hugging the minStagger floor.
+    const trueMin = Math.min(gapPrev, gapPrev2);
+    const key = [
+      Math.min(gapPrev, minStagger),
+      Math.min(gapPrev2, minStagger),
+      Number.isFinite(trueMin) ? trueMin : bl,
+    ] as const;
+    if (
+      !bestKey ||
+      key[0] > bestKey[0] + EPS ||
+      (approxEq(key[0], bestKey[0]) && key[1] > bestKey[1] + EPS) ||
+      (approxEq(key[0], bestKey[0]) && approxEq(key[1], bestKey[1]) && key[2] > bestKey[2] + EPS)
+    ) {
+      bestKey = key;
+      best = { startLen, seams, perSpan, gapPrev };
+    }
+  }
+  return best!;
+}
+
 /** Uniform perimeter gap for a polygon room (the largest of the four walls). */
 function uniformGapMm(inputs: Inputs): number {
   const g = inputs.gap;
@@ -143,27 +223,41 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
   // waste-neutral mirror — it only changes which wall the narrow row sits against.
   const rowWidths = inputs.flip === true ? [...balanced].reverse() : balanced;
 
-  const phaseOffset = Math.round(bl / PHASES);
   const pieces: Piece[] = [];
   const demand: DemandPiece[] = [];
+
+  // Stagger is chosen per row against the actual seam positions of the rows
+  // already laid (not a fixed schedule keyed on row index): each row's start
+  // piece is picked so its butt joints clear the previous one or two rows by at
+  // least `minStagger` wherever the run geometry allows.
+  const startLens: Mm[] = [];
+  let prevSeams: number[] = [];
+  let prevSeams2: number[] = [];
+  let minObservedStagger = Number.POSITIVE_INFINITY;
 
   let crossStart = crossMin;
   rowWidths.forEach((rw, k) => {
     const w = rw.width;
     const rowCross = crossStart;
     crossStart += w;
-    // Phase-staggered start piece: rows cycle bl, 2·bl/3, bl/3 → ~bl/3 stagger.
-    const startLen = bl - (k % PHASES) * phaseOffset;
     // Clip the full-run strip to the region first: a cavity wall (e.g. the inner
     // wall of an L) shortens this row, so we tile within its *actual* coverage
     // rather than the global bbox — that's what stops the notch cutting a sliver.
     const strip = boardRect(runMin, rowCross, runSpan, w, runIsX);
     const coverage = clipRings([strip], region).filter((r) => Math.abs(ringsArea([r])) > 1);
+    const spans = coverage.map((cover) => runRange(cover, runIsX));
+
+    const choice = chooseRowStart(spans, prevSeams, prevSeams2, bl, t.minPiece, t.minStagger);
+    startLens.push(choice.startLen);
+    if (Number.isFinite(choice.gapPrev))
+      minObservedStagger = Math.min(minObservedStagger, choice.gapPrev);
+    prevSeams2 = prevSeams;
+    prevSeams = choice.seams;
+
     let idx = 0;
-    for (const cover of coverage) {
-      const span = runRange(cover, runIsX);
+    spans.forEach((span, s) => {
       let runPos = span.min;
-      for (const segLen of runSegments(span.max - span.min, bl, startLen, t.minPiece)) {
+      for (const segLen of choice.perSpan[s]!) {
         const rect = boardRect(runPos, rowCross, segLen, w, runIsX);
         runPos += segLen;
         const clipped = clipRings([rect], region).filter((r) => Math.abs(ringsArea([r])) > 1);
@@ -188,7 +282,7 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
           demand.push({ pieceId: id, rowIndex: k, indexInRow: idx, length: runLen, width: crossLen, kind });
         }
       }
-    }
+    });
   });
   if (!pieces.length) return null;
 
@@ -224,17 +318,22 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
     crossVaries: false,
     innerOrigin: { x: bb.minX, y: bb.minY } as Point,
   };
+  // A single-piece row (or a one-row layout) has no interior seams, so the
+  // stagger is vacuously fine — only finite observations gate validity.
+  const staggerValid =
+    !Number.isFinite(minObservedStagger) || gte(minObservedStagger, t.minStagger);
+  const observed = Number.isFinite(minObservedStagger) ? minObservedStagger : bl;
   const stagger: StaggerInfo = {
-    achievedStagger: phaseOffset,
-    minObservedStagger: phaseOffset,
-    phases: PHASES,
-    naturalStagger: phaseOffset,
+    achievedStagger: observed,
+    minObservedStagger,
+    phases: new Set(startLens.map((s) => Math.round(s))).size,
+    naturalStagger: observed,
     nearMultipleTrap: false,
     usedMultiPiecePattern: false,
   };
   const score: PlanScore = {
-    valid: true,
-    staggerScore: phaseOffset,
+    valid: staggerValid,
+    staggerScore: observed,
     balanceScore: 1,
     wastePct: material.consumedWastePct,
   };
@@ -246,6 +345,12 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
         "Custom shape: rows are balanced and boards are clipped to the outline, with offcut reuse. Cut pieces around concave corners are an estimate — verify the trickier cuts on site.",
     },
   ];
+  if (!staggerValid)
+    diagnostics.push({
+      severity: "warn",
+      code: "stagger.belowMin",
+      message: `Adjacent-row stagger (${Math.round(minObservedStagger)} mm) is below the minimum (${t.minStagger} mm). On this shape no start offset clears it — increase the expansion gap, change the board length, or accept the closer joint.`,
+    });
   const sliver = undersizedDiagnostic(pieces, t.minPiece, t.minRowWidth);
   if (sliver) diagnostics.push(sliver);
 
@@ -268,7 +373,7 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
     cutList: cut.cutList,
     reuseMap: cut.reuseMap,
     material,
-    valid: true,
+    valid: staggerValid,
     diagnostics,
     score,
   };
