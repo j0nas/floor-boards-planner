@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { computeTaper } from "./taper.ts";
 import type { Geometry } from "./types.ts";
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { isUndersized, markUndersized, undersizedDiagnostic } from "./slivers.ts";
 import type { Piece } from "./types.ts";
 

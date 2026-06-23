@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { DEFAULT_BOARD } from "./defaults.ts";
 import { computeMaterial } from "./waste.ts";
 import type { CutResult } from "./cutting.ts";

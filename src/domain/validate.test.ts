@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { DEFAULT_BOARD, DEFAULT_INPUTS, recommendedMinGap } from "./defaults.ts";
 import { asRect, rectRoom } from "./room.ts";
 import { resolveBoardsPerPack, validateInputs } from "./validate.ts";

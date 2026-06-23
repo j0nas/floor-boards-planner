@@ -12,4 +12,13 @@ export default defineConfig({
   base: "./",
   plugins: [react(), tailwindcss()],
   fmt: {},
+  // Vitest config, bundled with vite-plus and run via `vp test`. Domain tests are
+  // pure Node; the React component tests opt into jsdom per-file with a
+  // `// @vitest-environment jsdom` directive.
+  test: {
+    include: ["src/**/*.test.{ts,tsx}", "test/**/*.test.{ts,tsx}"],
+    environment: "node",
+    setupFiles: ["./test/setup.ts"],
+    globals: false,
+  },
 });

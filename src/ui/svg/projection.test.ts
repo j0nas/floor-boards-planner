@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { centroidPx, fitProjection, polyToPoints } from "./projection.ts";
 import type { Point } from "../../domain/index.ts";
 

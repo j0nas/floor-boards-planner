@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { DEFAULT_GAP } from "./defaults.ts";
 import { computeGeometry, crossWidthAt, toRoom } from "./geometry.ts";
 import { asRect, rectRoom } from "./room.ts";

@@ -8,8 +8,8 @@
     "build": "tsc && vp build",
     "preview": "vp preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vp test --run",
+    "test:watch": "vp test",
     "prepare": "vp config"
   },
   "dependencies": {
@@ -30,8 +30,7 @@
     "tailwindcss": "^4.3.1",
     "typescript": "~6.0.2",
     "vite": "catalog:",
-    "vite-plus": "catalog:",
-    "vitest": "catalog:"
+    "vite-plus": "catalog:"
   },
   "packageManager": "pnpm@11.8.0"
 }

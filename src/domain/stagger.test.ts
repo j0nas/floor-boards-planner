@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { planRowPieces, planStagger, seamsOf } from "./stagger.ts";
 
 const BL = 2050;

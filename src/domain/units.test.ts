@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { approxEq, clamp, gte, lerp, lte, m2ToMm2, mm2ToM2, roundTo, sum } from "./units.ts";
 
 describe("units", () => {

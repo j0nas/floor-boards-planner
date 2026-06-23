@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "vite-plus/test";
 import { type DemandPiece, assignCuts } from "./cutting.ts";
 
 const BL = 2050;

@@ -1,6 +1,5 @@
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@latest
-  vitest: ^3.2.6
   vite-plus: 0.2.1
 overrides:
   vite: "catalog:"
