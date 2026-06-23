@@ -87,7 +87,7 @@ describe("expansion gap guidance (matches ~1 mm/metre industry rule)", () => {
     for (const code of ["gap.tooSmall", "span.expansionJoint"]) {
       const diag = ds.find((d) => d.code === code);
       expect(diag?.sources?.length).toBeGreaterThan(0);
-      expect(diag?.sources?.every((s) => /^https:\/\//.test(s.url) && s.label)).toBe(true);
+      expect(diag?.sources?.every((s) => s.url.startsWith("https://") && s.label)).toBe(true);
     }
   });
 

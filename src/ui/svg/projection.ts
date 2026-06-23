@@ -41,12 +41,15 @@ function boundsOf(points: readonly Point[]): Bounds {
  * centering. Room Y is flipped so the near wall (y=0) sits at the bottom — the
  * view reads like standing in the doorway looking into the room.
  */
-export function fitProjection(
-  points: readonly Point[],
-  maxPx = 1000,
-  padding = 36,
-): Projection {
-  const b = boundsOf(points.length ? points : [{ x: 0, y: 0 }, { x: 1000, y: 1000 }]);
+export function fitProjection(points: readonly Point[], maxPx = 1000, padding = 36): Projection {
+  const b = boundsOf(
+    points.length
+      ? points
+      : [
+          { x: 0, y: 0 },
+          { x: 1000, y: 1000 },
+        ],
+  );
   const wMm = Math.max(1, b.maxX - b.minX);
   const hMm = Math.max(1, b.maxY - b.minY);
 

@@ -51,7 +51,15 @@ export function SvgPlan({ plan, pieces, room, proj }: Props) {
           patternTransform="rotate(-45)"
           patternUnits="userSpaceOnUse"
         >
-          <line x1="0" y1="0" x2="0" y2="5" stroke={SLIVER_STROKE} strokeWidth="1.4" opacity="0.7" />
+          <line
+            x1="0"
+            y1="0"
+            x2="0"
+            y2="5"
+            stroke={SLIVER_STROKE}
+            strokeWidth="1.4"
+            opacity="0.7"
+          />
         </pattern>
       </defs>
 
@@ -117,7 +125,12 @@ export function PlanLegend() {
       <LegendSwatch label="Cut piece" color={FILL["cut-length"]} />
       <LegendSwatch label="Taper" color={FILL.taper} />
       <LegendSwatch label="Ripped row" color={FILL.full} hatch="#1e293b" />
-      <LegendSwatch label="Below min length" color={FILL["cut-length"]} hatch={SLIVER_STROKE} border={SLIVER_STROKE} />
+      <LegendSwatch
+        label="Below min length"
+        color={FILL["cut-length"]}
+        hatch={SLIVER_STROKE}
+        border={SLIVER_STROKE}
+      />
       <LegendSwatch label="Expansion gap" color="#f87171" />
     </div>
   );
@@ -138,7 +151,13 @@ function LegendSwatch({
   return (
     <span className="flex items-center gap-1.5">
       <svg width="14" height="14" className="shrink-0">
-        <rect width="14" height="14" fill={color} stroke={border} strokeWidth={border === "#475569" ? 0.7 : 1.4} />
+        <rect
+          width="14"
+          height="14"
+          fill={color}
+          stroke={border}
+          strokeWidth={border === "#475569" ? 0.7 : 1.4}
+        />
         {hatch ? (
           <line x1="0" y1="14" x2="14" y2="0" stroke={hatch} strokeWidth="1.2" opacity="0.7" />
         ) : null}

@@ -95,7 +95,13 @@ describe("room — editing ops", () => {
   test("removeCorner drops a vertex but never below a triangle", () => {
     const five = insertCorner(rectRoom(SQUARE), 0);
     expect(removeCorner(five, 1).outline).toHaveLength(4);
-    const tri: RoomShape = { outline: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 0, y: 100 }] };
+    const tri: RoomShape = {
+      outline: [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 0, y: 100 },
+      ],
+    };
     expect(removeCorner(tri, 0)).toBe(tri); // refuses to go below 3
   });
 
@@ -118,7 +124,12 @@ describe("room — editing ops", () => {
     expect(selfIntersects(rectRoom(SQUARE))).toBe(false);
     expect(selfIntersects(L_ROOM)).toBe(false);
     const bowtie: RoomShape = {
-      outline: [{ x: 0, y: 0 }, { x: 100, y: 100 }, { x: 100, y: 0 }, { x: 0, y: 100 }],
+      outline: [
+        { x: 0, y: 0 },
+        { x: 100, y: 100 },
+        { x: 100, y: 0 },
+        { x: 0, y: 100 },
+      ],
     };
     expect(selfIntersects(bowtie)).toBe(true);
   });

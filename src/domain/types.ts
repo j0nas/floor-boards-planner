@@ -50,9 +50,7 @@ export interface Pack {
   areaPerPack?: Mm2;
 }
 
-export type Orientation =
-  | { mode: "auto" }
-  | { mode: "forced"; runAxis: Axis };
+export type Orientation = { mode: "auto" } | { mode: "forced"; runAxis: Axis };
 
 /** Tunables with sensible defaults; all lengths in mm. */
 export interface Tunables {

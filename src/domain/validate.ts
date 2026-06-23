@@ -19,11 +19,13 @@ import { type Mm, gt, lt } from "./units.ts";
  */
 const GAP_SOURCES: readonly Citation[] = [
   {
-    label: "Pergo (manufacturer, NO): ~5 mm baseline clearance — 3 mm in dry winter air, 8 mm in humid conditions",
+    label:
+      "Pergo (manufacturer, NO): ~5 mm baseline clearance — 3 mm in dry winter air, 8 mm in humid conditions",
     url: "https://www.megaflis.no/globalassets/productimages/5401013674656_mon.pdf",
   },
   {
-    label: "OBS BYGG — Leggeanvisning laminatgulv: 8–10 mm to walls, max ~10 × 10 m without an expansion joint",
+    label:
+      "OBS BYGG — Leggeanvisning laminatgulv: 8–10 mm to walls, max ~10 × 10 m without an expansion joint",
     url: "https://www.obsbygg.no/globalassets/productdocumentsfolder2/688621_3423128631586_.pdf",
   },
   {
@@ -58,7 +60,9 @@ function err(code: string, message: string): Diagnostic {
   return { severity: "error", code, message };
 }
 function warn(code: string, message: string, sources?: readonly Citation[]): Diagnostic {
-  return sources ? { severity: "warn", code, message, sources } : { severity: "warn", code, message };
+  return sources
+    ? { severity: "warn", code, message, sources }
+    : { severity: "warn", code, message };
 }
 
 /** Maximum quad span (for gap sizing warnings). */

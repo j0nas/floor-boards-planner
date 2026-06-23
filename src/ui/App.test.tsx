@@ -7,7 +7,9 @@ afterEach(cleanup);
 
 test("App renders the planner with a computed material estimate", () => {
   render(<App />);
-  expect(screen.getByRole("heading", { name: /Laminate Floor Layout Planner/i })).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { name: /Laminate Floor Layout Planner/i }),
+  ).toBeInTheDocument();
   // The default scenario produces a plan, so the material summary is present.
   expect(screen.getByText(/Boards needed/i)).toBeInTheDocument();
   expect(screen.getByText(/Cut list & offcut reuse/i)).toBeInTheDocument();

@@ -80,8 +80,7 @@ export function usePlannerState(): PlannerState {
 
   const activeAxis = view.axis ?? result.chosenAxis;
   const activePlan = result.plans[activeAxis] ?? result.plans[result.chosenAxis];
-  const activeOptionIndex =
-    view.optionIndex ?? activePlan?.chosenOptionIndex ?? 0;
+  const activeOptionIndex = view.optionIndex ?? activePlan?.chosenOptionIndex ?? 0;
 
   return {
     inputs,

@@ -1,4 +1,11 @@
-import { type Axis, type Inputs, type Orientation, type Plan, longAxis, mm2ToM2 } from "../../domain/index.ts";
+import {
+  type Axis,
+  type Inputs,
+  type Orientation,
+  type Plan,
+  longAxis,
+  mm2ToM2,
+} from "../../domain/index.ts";
 import { NumberField } from "./NumberField.tsx";
 
 /** Orientation label tracking the room's proportions: "length" = the longer side. */
@@ -70,7 +77,7 @@ export function InputsPanel({ inputs, setInputs, onReset, activePlan }: Props) {
               ["auto", "Auto"],
               ["X", axisLabel(inputs.room, "X")],
               ["Y", axisLabel(inputs.room, "Y")],
-            ] as [("auto" | Axis), string][]
+            ] as ["auto" | Axis, string][]
           ).map(([v, label]) => (
             <button
               key={v}

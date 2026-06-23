@@ -57,7 +57,13 @@ function bboxOf(rings: readonly Ring[]): Box {
 }
 
 /** Axis-aligned board rectangle (run along X or Y) of the given run length × width. */
-function boardRect(runStart: number, crossStart: number, runLen: number, w: number, runIsX: boolean): Ring {
+function boardRect(
+  runStart: number,
+  crossStart: number,
+  runLen: number,
+  w: number,
+  runIsX: boolean,
+): Ring {
   if (runIsX) {
     return [
       { x: runStart, y: crossStart },
@@ -279,7 +285,14 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
             isRipped: crossLen < bw - EPS,
           });
           // One cut-demand per piece: cut to its run length, at the row's width.
-          demand.push({ pieceId: id, rowIndex: k, indexInRow: idx, length: runLen, width: crossLen, kind });
+          demand.push({
+            pieceId: id,
+            rowIndex: k,
+            indexInRow: idx,
+            length: runLen,
+            width: crossLen,
+            kind,
+          });
         }
       }
     });

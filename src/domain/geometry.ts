@@ -1,10 +1,4 @@
-import type {
-  Axis,
-  ExpansionGap,
-  Geometry,
-  Point,
-  RectMeasurements,
-} from "./types.ts";
+import type { Axis, ExpansionGap, Geometry, Point, RectMeasurements } from "./types.ts";
 import { type Mm, lerp } from "./units.ts";
 
 /** The other axis. */
@@ -65,11 +59,7 @@ export function crossWidthAt(geom: Geometry, t: number): Mm {
  * Map a local (runPos, crossPos) coordinate — both measured from the inner
  * usable corner — to room mm coordinates for the given orientation.
  */
-export function toRoom(
-  geom: Geometry,
-  runPos: Mm,
-  crossPos: Mm,
-): Point {
+export function toRoom(geom: Geometry, runPos: Mm, crossPos: Mm): Point {
   const { innerOrigin } = geom;
   if (geom.runAxis === "Y") {
     // run = Y, cross = X

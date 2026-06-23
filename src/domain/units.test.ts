@@ -1,15 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  approxEq,
-  clamp,
-  gte,
-  lerp,
-  lte,
-  m2ToMm2,
-  mm2ToM2,
-  roundTo,
-  sum,
-} from "./units.ts";
+import { approxEq, clamp, gte, lerp, lte, m2ToMm2, mm2ToM2, roundTo, sum } from "./units.ts";
 
 describe("units", () => {
   test("approxEq within tolerance", () => {

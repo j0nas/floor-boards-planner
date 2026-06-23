@@ -24,12 +24,7 @@ describe("assignCuts", () => {
 
   test("reuse beats the naive one-board-per-piece count", () => {
     // four 2/3-board pieces + four 1/3-board pieces → 4 boards, not 8
-    const res = assignCuts(
-      demand([1367, 1367, 1367, 1367, 683, 683, 683, 683]),
-      BL,
-      0,
-      300,
-    );
+    const res = assignCuts(demand([1367, 1367, 1367, 1367, 683, 683, 683, 683]), BL, 0, 300);
     expect(res.boardsConsumed).toBe(4);
   });
 

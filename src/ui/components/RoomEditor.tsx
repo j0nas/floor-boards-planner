@@ -98,7 +98,8 @@ export function RoomEditor({ inputs, setInputs }: Props) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <p className="text-[11px] text-slate-500">
-          Drag corners to reshape · click a ＋ on an edge to add a wall · select a corner to remove it.
+          Drag corners to reshape · click a ＋ on an edge to add a wall · select a corner to remove
+          it.
         </p>
         <div className="flex gap-1">
           <button
@@ -149,9 +150,30 @@ export function RoomEditor({ inputs, setInputs }: Props) {
               role="button"
               aria-label={`Add a wall on edge ${i + 1}`}
             >
-              <circle cx={mid.x} cy={mid.y} r={r(70)} fill="#fff" stroke="#94a3b8" strokeWidth={1.2} />
-              <line x1={mid.x - r(45)} y1={mid.y} x2={mid.x + r(45)} y2={mid.y} stroke="#64748b" strokeWidth={1.4} />
-              <line x1={mid.x} y1={mid.y - r(45)} x2={mid.x} y2={mid.y + r(45)} stroke="#64748b" strokeWidth={1.4} />
+              <circle
+                cx={mid.x}
+                cy={mid.y}
+                r={r(70)}
+                fill="#fff"
+                stroke="#94a3b8"
+                strokeWidth={1.2}
+              />
+              <line
+                x1={mid.x - r(45)}
+                y1={mid.y}
+                x2={mid.x + r(45)}
+                y2={mid.y}
+                stroke="#64748b"
+                strokeWidth={1.4}
+              />
+              <line
+                x1={mid.x}
+                y1={mid.y - r(45)}
+                x2={mid.x}
+                y2={mid.y + r(45)}
+                stroke="#64748b"
+                strokeWidth={1.4}
+              />
             </g>
           );
         })}
@@ -199,7 +221,9 @@ export function RoomEditor({ inputs, setInputs }: Props) {
             >
               <span className="tabular-nums text-slate-400">{i + 1}</span>
               {closing ? (
-                <span className="tabular-nums text-slate-400">{Math.round(w.length)} mm (closes)</span>
+                <span className="tabular-nums text-slate-400">
+                  {Math.round(w.length)} mm (closes)
+                </span>
               ) : (
                 <EditableDim
                   value={w.length}

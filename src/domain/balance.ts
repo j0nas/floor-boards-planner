@@ -27,11 +27,7 @@ function fullRow(bw: Mm): RowWidth {
  * Rule: rather than leave a thin sliver last row, split the leftover across the
  * first and last rows so both equal (leftover + boardWidth) / 2.
  */
-export function balanceRows(
-  W: Mm,
-  bw: Mm,
-  minRowWidth: Mm,
-): LayoutOptionDraft[] {
+export function balanceRows(W: Mm, bw: Mm, minRowWidth: Mm): LayoutOptionDraft[] {
   // Room narrower than a single board: one (ripped) row spanning the whole width.
   if (lt(W, bw)) {
     return [

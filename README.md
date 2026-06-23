@@ -39,16 +39,16 @@ pnpm typecheck    # tsc --noEmit
 Pure functions, no React/DOM, no randomness. `computePlans(inputs)` runs both
 orientations and chooses the better one (unless forced).
 
-| Module | Responsibility |
-| --- | --- |
-| `geometry.ts` | Fixed room frame; run length & cross-width (with linear taper) per orientation |
-| `balance.ts` | Border balancing — split a sliver leftover into two equal end rows `(leftover+bw)/2`; surface balanced/unbalanced options |
-| `stagger.ts` | P-phase offset schedule (~⅓ board); **near-multiple-trap** detection and multi-piece rescue; stagger validated on actual seam positions |
-| `cutting.ts` | 1-D cutting-stock with best-fit offcut reuse + complementary pairing + kerf; reuse map |
-| `taper.ts` | Out-of-square last-row trapezoid; verifies the gap is held and the narrow end ≥ min row |
-| `waste.ts` | Boards, packs, honest waste % (against board area), safe purchase recommendation minus on-hand |
-| `compare.ts` | Lexicographic orientation choice: valid → stagger → balance → waste |
-| `plan.ts` | Orchestrator: geometry → balance → stagger → materialise pieces → cut → material → score |
+| Module        | Responsibility                                                                                                                          |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `geometry.ts` | Fixed room frame; run length & cross-width (with linear taper) per orientation                                                          |
+| `balance.ts`  | Border balancing — split a sliver leftover into two equal end rows `(leftover+bw)/2`; surface balanced/unbalanced options               |
+| `stagger.ts`  | P-phase offset schedule (~⅓ board); **near-multiple-trap** detection and multi-piece rescue; stagger validated on actual seam positions |
+| `cutting.ts`  | 1-D cutting-stock with best-fit offcut reuse + complementary pairing + kerf; reuse map                                                  |
+| `taper.ts`    | Out-of-square last-row trapezoid; verifies the gap is held and the narrow end ≥ min row                                                 |
+| `waste.ts`    | Boards, packs, honest waste % (against board area), safe purchase recommendation minus on-hand                                          |
+| `compare.ts`  | Lexicographic orientation choice: valid → stagger → balance → waste                                                                     |
+| `plan.ts`     | Orchestrator: geometry → balance → stagger → materialise pieces → cut → material → score                                                |
 
 ### Key correctness decisions
 

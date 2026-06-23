@@ -155,7 +155,11 @@ describe("polyLayout — stagger is honoured on a stepped custom shape", () => {
       const xs = p.poly.map((q) => q.x);
       const lo = Math.min(...xs);
       const hi = Math.max(...xs);
-      const r = byRow.get(p.rowIndex) ?? { min: Infinity, max: -Infinity, bounds: new Set<number>() };
+      const r = byRow.get(p.rowIndex) ?? {
+        min: Infinity,
+        max: -Infinity,
+        bounds: new Set<number>(),
+      };
       r.min = Math.min(r.min, lo);
       r.max = Math.max(r.max, hi);
       r.bounds.add(Math.round(lo));
@@ -164,7 +168,9 @@ describe("polyLayout — stagger is honoured on a stepped custom shape", () => {
     }
     const seams = [...byRow.entries()]
       .sort((a, b) => a[0] - b[0])
-      .map(([, r]) => [...r.bounds].filter((b) => b - r.min > 1 && r.max - b > 1).sort((a, b) => a - b));
+      .map(([, r]) =>
+        [...r.bounds].filter((b) => b - r.min > 1 && r.max - b > 1).sort((a, b) => a - b),
+      );
     let mn = Number.POSITIVE_INFINITY;
     for (let k = 0; k + 1 < seams.length; k++)
       for (const a of seams[k]!) for (const b of seams[k + 1]!) mn = Math.min(mn, Math.abs(a - b));

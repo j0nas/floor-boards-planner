@@ -37,7 +37,8 @@ export function chooseAxis(
   // "length" = the longer room side, "width" = the shorter, so the verdict reads
   // the same way as the orientation labels in the UI.
   const word = (a: Axis) => (a === long ? "length" : "width");
-  const phrase = (a: Axis) => `along the ${word(a)} (the ${a === long ? "longer" : "shorter"} walls)`;
+  const phrase = (a: Axis) =>
+    `along the ${word(a)} (the ${a === long ? "longer" : "shorter"} walls)`;
 
   if (forced) {
     const other = forced === "X" ? planY : planX;

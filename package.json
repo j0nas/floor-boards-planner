@@ -12,6 +12,12 @@
     "test:watch": "vitest",
     "prepare": "vp config"
   },
+  "dependencies": {
+    "@use-gesture/react": "^10.3.1",
+    "clipper2-ts": "2.0.1-17",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.1",
     "@testing-library/dom": "^10.4.1",
@@ -27,11 +33,5 @@
     "vite-plus": "catalog:",
     "vitest": "catalog:"
   },
-  "packageManager": "pnpm@11.8.0",
-  "dependencies": {
-    "@use-gesture/react": "^10.3.1",
-    "clipper2-ts": "2.0.1-17",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7"
-  }
+  "packageManager": "pnpm@11.8.0"
 }

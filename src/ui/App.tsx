@@ -9,12 +9,7 @@ import { OrientationCompare } from "./components/OrientationCompare.tsx";
 import { PlanCanvas } from "./components/PlanCanvas.tsx";
 import { PlanLegend } from "./components/SvgPlan.tsx";
 import { RoomEditor } from "./components/RoomEditor.tsx";
-import {
-  cutListToCsv,
-  downloadText,
-  projectFromJson,
-  projectToJson,
-} from "./exports.ts";
+import { cutListToCsv, downloadText, projectFromJson, projectToJson } from "./exports.ts";
 import { usePlannerState } from "./state/usePlannerState.ts";
 
 function Card({
@@ -28,9 +23,7 @@ function Card({
 }) {
   return (
     <section className={`rounded-xl border border-slate-200 bg-white p-4 shadow-sm ${className}`}>
-      {title ? (
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">{title}</h2>
-      ) : null}
+      {title ? <h2 className="mb-3 text-sm font-semibold text-slate-700">{title}</h2> : null}
       {children}
     </section>
   );
@@ -58,10 +51,7 @@ export function App() {
     return piecesForOption(activePlan.geometry, rows, inputs.board.length);
   }, [activePlan, activeOptionIndex, inputs.board.length]);
 
-  const allDiagnostics = [
-    ...result.diagnostics,
-    ...(activePlan?.diagnostics ?? []),
-  ];
+  const allDiagnostics = [...result.diagnostics, ...(activePlan?.diagnostics ?? [])];
 
   const gapWarn = result.diagnostics.some(
     (d) => d.code === "gap.tooSmall" || d.code === "gap.negative",
@@ -99,14 +89,18 @@ export function App() {
             <button
               type="button"
               disabled={!activePlan}
-              onClick={() => activePlan && downloadText("cut-list.csv", cutListToCsv(activePlan), "text/csv")}
+              onClick={() =>
+                activePlan && downloadText("cut-list.csv", cutListToCsv(activePlan), "text/csv")
+              }
               className="rounded border border-slate-300 px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-40"
             >
               Export CSV
             </button>
             <button
               type="button"
-              onClick={() => downloadText("floor-plan.json", projectToJson(inputs), "application/json")}
+              onClick={() =>
+                downloadText("floor-plan.json", projectToJson(inputs), "application/json")
+              }
               className="rounded border border-slate-300 px-2.5 py-1.5 text-slate-600 hover:bg-slate-100"
             >
               Save
@@ -193,8 +187,8 @@ export function App() {
           ) : (
             <Card title="No valid layout">
               <p className="text-sm text-slate-600">
-                The current inputs can&rsquo;t produce a valid floor layout. Fix the errors above and
-                the plan will update automatically.
+                The current inputs can&rsquo;t produce a valid floor layout. Fix the errors above
+                and the plan will update automatically.
               </p>
             </Card>
           )}

@@ -172,7 +172,7 @@ export function selfIntersects(room: RoomShape): boolean {
     const d2 = cross(c, d, b);
     const d3 = cross(a, b, c);
     const d4 = cross(a, b, d);
-    return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+    return d1 > 0 !== d2 > 0 && d3 > 0 !== d4 > 0;
   };
   for (let i = 0; i < n; i++) {
     const a = o[i]!;

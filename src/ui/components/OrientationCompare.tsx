@@ -1,4 +1,10 @@
-import { type Axis, type Plan, type PlanResult, type RoomShape, longAxis } from "../../domain/index.ts";
+import {
+  type Axis,
+  type Plan,
+  type PlanResult,
+  type RoomShape,
+  longAxis,
+} from "../../domain/index.ts";
 import type { ViewSelection } from "../state/usePlannerState.ts";
 
 interface Props {
@@ -54,10 +60,7 @@ export function OrientationCompare({
             const isChosen = axis === result.chosenAxis;
             const isActive = axis === activeAxis;
             return (
-              <tr
-                key={axis}
-                className={`border-t border-slate-100 ${isActive ? "bg-sky-50" : ""}`}
-              >
+              <tr key={axis} className={`border-t border-slate-100 ${isActive ? "bg-sky-50" : ""}`}>
                 <td className="px-2 py-1 text-left">
                   <span className="font-medium text-slate-700">{axisLabel(axis)}</span>
                   {isChosen && !result.forced ? (
