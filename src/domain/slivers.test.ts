@@ -49,4 +49,33 @@ describe("slivers", () => {
     markUndersized(pieces, 300, 50);
     expect(undersizedDiagnostic(pieces, 300, 50)).toBeNull();
   });
+
+  test("flags a thin diagonal fragment whose bbox looks full but real area is a sliver", () => {
+    // Right triangle: bbox 400×60 (both ≥ the minimums) but area = 12 000 mm²,
+    // below the 300×50 = 15 000 mm² minimum installable rectangle.
+    const wedge: Pick<Piece, "faceLength" | "faceWidth" | "poly"> = {
+      faceLength: 400,
+      faceWidth: 60,
+      poly: [
+        { x: 0, y: 0 },
+        { x: 400, y: 0 },
+        { x: 0, y: 60 },
+      ],
+    };
+    expect(isUndersized(wedge, 300, 50)).toBe(true);
+  });
+
+  test("a full rectangle with the same bbox is not a sliver", () => {
+    const rect: Pick<Piece, "faceLength" | "faceWidth" | "poly"> = {
+      faceLength: 400,
+      faceWidth: 60,
+      poly: [
+        { x: 0, y: 0 },
+        { x: 400, y: 0 },
+        { x: 400, y: 60 },
+        { x: 0, y: 60 },
+      ],
+    };
+    expect(isUndersized(rect, 300, 50)).toBe(false);
+  });
 });

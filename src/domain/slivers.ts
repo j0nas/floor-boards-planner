@@ -8,16 +8,28 @@
  * around a concave corner can still produce them, so they are highlighted in
  * the plan rather than hidden.
  */
+import { ringsArea } from "./poly.ts";
 import type { Diagnostic, Piece } from "./types.ts";
 import { EPS, type Mm } from "./units.ts";
 
-/** True when a piece is shorter than `minPiece` or narrower than `minRowWidth`. */
+/**
+ * True when a piece is shorter than `minPiece`, narrower than `minRowWidth`, or
+ * (for a real clipped polygon) smaller in actual area than the minimum
+ * installable rectangle. The area test catches thin diagonal/triangular
+ * fragments around a slanted wall or concave corner whose bounding box looks
+ * full-size but whose real area is a sliver — the bbox dimensions alone miss them.
+ */
 export function isUndersized(
-  p: Pick<Piece, "faceLength" | "faceWidth">,
+  p: Pick<Piece, "faceLength" | "faceWidth" | "poly">,
   minPiece: Mm,
   minRowWidth: Mm,
 ): boolean {
-  return p.faceLength < minPiece - EPS || p.faceWidth < minRowWidth - EPS;
+  if (p.faceLength < minPiece - EPS || p.faceWidth < minRowWidth - EPS) return true;
+  if (p.poly.length >= 3) {
+    const area = Math.abs(ringsArea([p.poly]));
+    if (area < minPiece * minRowWidth - EPS) return true;
+  }
+  return false;
 }
 
 /** Tag every piece with its `undersized` flag (mutates in place). */

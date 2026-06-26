@@ -56,7 +56,9 @@ export function balanceRows(W: Mm, bw: Mm, minRowWidth: Mm): LayoutOptionDraft[]
         recommended: true,
         reason: "Width is an exact multiple of the board — every row is a full board.",
         rowWidths: rows,
-        valid: true,
+        // Even a full-board row is invalid if the minimum row width is set above
+        // the board width (caught within EPS by validateInputs, but be consistent).
+        valid: gte(bw, minRowWidth),
       },
     ];
   }

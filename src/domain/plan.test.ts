@@ -156,6 +156,21 @@ describe("computePlans — forced orientation", () => {
   });
 });
 
+describe("computePlans — forced orientation that doesn't fit", () => {
+  test("falls back to the feasible orientation instead of pointing at a null plan", () => {
+    const inputs = clone(DEFAULT_INPUTS);
+    // 300 mm wide room: running boards along the width leaves a 280 mm run,
+    // below the 300 mm min piece → that orientation is infeasible.
+    inputs.room = rectRoom({ widthNear: 300, widthFar: 300, lengthLeft: 3000, lengthRight: 3000 });
+    inputs.orientation = { mode: "forced", runAxis: "X" };
+    const r = computePlans(inputs);
+    expect(r.plans.X).toBeNull();
+    expect(r.chosenAxis).toBe("Y");
+    expect(r.plans[r.chosenAxis]).not.toBeNull(); // chosen axis always has a plan
+    expect(r.comparison.some((d) => d.code === "orientation.forcedInfeasible")).toBe(true);
+  });
+});
+
 describe("computePlans — invalid inputs", () => {
   test("min piece larger than board → hard error, no plans", () => {
     const inputs = clone(DEFAULT_INPUTS);

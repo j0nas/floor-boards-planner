@@ -100,3 +100,30 @@ describe("expansion gap guidance (matches ~1 mm/metre industry rule)", () => {
     expect(codes).toContain("gap.tooSmall");
   });
 });
+
+describe("feasibility guards", () => {
+  test("gaps that swallow the room are a hard error (not a silent empty plan)", () => {
+    const i = clone();
+    i.gap = { near: 1600, far: 1600, left: 10, right: 10 }; // 3200 > 3000 m length
+    const ds = validateInputs(i);
+    expect(ds.some((d) => d.code === "gap.exceedsRoom" && d.severity === "error")).toBe(true);
+  });
+
+  test("a min piece over half the board warns but is not itself an error", () => {
+    const i = clone();
+    i.tunables.minPiece = 1200; // board 2050 → > half (1025), ≤ board
+    const codes = validateInputs(i);
+    expect(codes.some((d) => d.code === "minPiece.gtHalfBoard" && d.severity === "warn")).toBe(
+      true,
+    );
+    expect(codes.some((d) => d.code === "minPiece.gtBoard")).toBe(false);
+  });
+
+  test("the redundant half-board row warning is suppressed when the hard error fires", () => {
+    const i = clone();
+    i.tunables.minRowWidth = i.board.width + 100; // exceeds board width → error
+    const codes = validateInputs(i).map((d) => d.code);
+    expect(codes).toContain("minRow.gtBoard");
+    expect(codes).not.toContain("minRow.gtHalfBoard");
+  });
+});

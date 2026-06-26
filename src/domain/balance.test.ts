@@ -73,4 +73,11 @@ describe("balanceRows", () => {
     const counts = opts.map((o) => o.rowWidths.length);
     expect(new Set(counts).size).toBe(1); // both have same row count
   });
+
+  test("exact multiple is invalid when the min row width exceeds the board width", () => {
+    // 1000 = 5×200 exactly, but a 250 mm min row width can't be met by 200 mm rows.
+    expect(balanceRows(1000, 200, 250)[0]?.valid).toBe(false);
+    // …and stays valid when the min row width is satisfiable.
+    expect(balanceRows(1000, 200, 50)[0]?.valid).toBe(true);
+  });
 });

@@ -90,6 +90,27 @@ function quadGapDiagnostics(rect: RectMeasurements, gap: ExpansionGap): Diagnost
     d.push(err("gap.negative", `Expansion gap${wallSuffix(negativeWalls)} cannot be negative.`));
   }
 
+  // Gaps so large they swallow the room: opposite-wall gaps must leave usable
+  // floor, else geometry collapses to nothing with no other explanation.
+  const lengthMin = Math.min(rect.lengthLeft, rect.lengthRight);
+  const widthMin = Math.min(rect.widthNear, rect.widthFar);
+  if (gap.near + gap.far >= lengthMin) {
+    d.push(
+      err(
+        "gap.exceedsRoom",
+        `Near + far expansion gaps (${gap.near} + ${gap.far} mm) leave no floor along the ${Math.round(lengthMin)} mm length.`,
+      ),
+    );
+  }
+  if (gap.left + gap.right >= widthMin) {
+    d.push(
+      err(
+        "gap.exceedsRoom",
+        `Left + right expansion gaps (${gap.left} + ${gap.right} mm) leave no floor along the ${Math.round(widthMin)} mm width.`,
+      ),
+    );
+  }
+
   const tooSmall = new Map<string, { value: Mm; recMin: Mm; walls: string[] }>();
   for (const [name, v, span] of gapChecks) {
     if (v < 0) continue;
@@ -161,6 +182,15 @@ export function validateInputs(i: Inputs): Diagnostic[] {
         `Minimum piece length (${tunables.minPiece} mm) exceeds the board length (${board.length} mm); no layout is possible.`,
       ),
     );
+  } else if (gt(tunables.minPiece, board.length / 2)) {
+    // Above half a board, a short row leftover can't be rebalanced into the
+    // neighbour without one of the two pieces dropping below the minimum.
+    d.push(
+      warn(
+        "minPiece.gtHalfBoard",
+        `Minimum piece length (${tunables.minPiece} mm) is more than half a board length (${board.length} mm); some rows may be forced to a short end piece.`,
+      ),
+    );
   }
   if (gt(tunables.minRowWidth, board.width)) {
     d.push(
@@ -169,8 +199,7 @@ export function validateInputs(i: Inputs): Diagnostic[] {
         `Minimum row width (${tunables.minRowWidth} mm) exceeds the board width (${board.width} mm); no layout is possible.`,
       ),
     );
-  }
-  if (gt(tunables.minRowWidth, board.width / 2)) {
+  } else if (gt(tunables.minRowWidth, board.width / 2)) {
     d.push(
       warn(
         "minRow.gtHalfBoard",

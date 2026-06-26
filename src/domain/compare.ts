@@ -41,16 +41,25 @@ export function chooseAxis(
     `along the ${word(a)} (the ${a === long ? "longer" : "shorter"} walls)`;
 
   if (forced) {
-    const other = forced === "X" ? planY : planX;
     const chosen = forced === "X" ? planX : planY;
+    const other = forced === "X" ? planY : planX;
+    // Forced orientation is infeasible while the other works: fall back so the
+    // chosen axis always points at a real plan (never null), and say why.
+    if (!chosen && other) {
+      const fallback: Axis = forced === "X" ? "Y" : "X";
+      comparison.push({
+        severity: "warn",
+        code: "orientation.forcedInfeasible",
+        message: `Boards can't run ${phrase(forced)} for this room — no usable layout fits that way. Showing ${phrase(fallback)} instead.`,
+      });
+      return { axis: fallback, comparison };
+    }
     comparison.push({
       severity: "info",
       code: "orientation.forced",
       message: `Orientation forced: boards run ${phrase(forced)}.`,
     });
-    if (chosen && other) {
-      comparison.push(orientationVerdict(planX, planY, word));
-    }
+    if (chosen && other) comparison.push(orientationVerdict(planX, planY, word));
     return { axis: forced, comparison };
   }
 
