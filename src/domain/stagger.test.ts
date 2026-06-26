@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 import { planRowPieces, planStagger, seamsOf } from "./stagger.ts";
+import { makeRng } from "./units.ts";
 
 const BL = 2050;
 const MIN_PIECE = 300;
@@ -90,5 +91,67 @@ describe("planStagger — robustness over many run lengths", () => {
       const mn = Math.min(...allPieces(L, plan.startOffsets));
       expect(mn, `L=${L}`).toBeGreaterThanOrEqual(MIN_PIECE - 0.5);
     }
+  });
+});
+
+describe("planStagger — randomised pattern", () => {
+  const L = 4980;
+  const ROWS = 14;
+  const base = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL); // randomness 0
+  const rnd = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 7);
+
+  test("randomness 0 leaves the regular schedule byte-for-byte unchanged", () => {
+    const explicitZero = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 0, 7);
+    expect(explicitZero.startOffsets).toEqual(base.startOffsets);
+  });
+
+  test("a randomised layout still clears every minimum", () => {
+    expect(Math.min(...allPieces(L, rnd.startOffsets))).toBeGreaterThanOrEqual(MIN_PIECE - 0.5);
+    expect(minAdjacentStagger(L, rnd.startOffsets)).toBeGreaterThanOrEqual(MIN_STAGGER - 0.5);
+    expect(rnd.info.minObservedStagger).toBeGreaterThanOrEqual(MIN_STAGGER - 0.5);
+  });
+
+  test("randomisation actually changes the pattern", () => {
+    const changed = rnd.startOffsets.some((s, i) => Math.abs(s - (base.startOffsets[i] ?? 0)) > 1);
+    expect(changed).toBe(true);
+  });
+
+  test("deterministic by seed; different seeds give different patterns", () => {
+    const a = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 7);
+    const b = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 7);
+    const c = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 99);
+    expect(a.startOffsets).toEqual(b.startOffsets);
+    expect(c.startOffsets).not.toEqual(a.startOffsets);
+  });
+
+  test("full randomness never emits a sub-min piece, even near a board multiple", () => {
+    for (let L2 = 2200; L2 <= 9000; L2 += 53) {
+      const p = planStagger(L2, BL, 10, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 5);
+      expect(Math.min(...allPieces(L2, p.startOffsets)), `L=${L2}`).toBeGreaterThanOrEqual(
+        MIN_PIECE - 0.5,
+      );
+    }
+  });
+
+  test("randomness still clears the stagger floor on an exact board multiple", () => {
+    const p = planStagger(6 * BL, BL, 12, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 3);
+    expect(minAdjacentStagger(6 * BL, p.startOffsets)).toBeGreaterThanOrEqual(MIN_STAGGER - 0.5);
+  });
+});
+
+describe("makeRng (seeded PRNG)", () => {
+  test("is deterministic for a seed and yields [0,1)", () => {
+    const a = Array.from({ length: 8 }, makeRng(123));
+    const b = Array.from({ length: 8 }, makeRng(123));
+    expect(a).toEqual(b);
+    for (const x of a) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThan(1);
+    }
+  });
+  test("different seeds diverge", () => {
+    const a = makeRng(1)();
+    const b = makeRng(2)();
+    expect(a).not.toBe(b);
   });
 });

@@ -65,6 +65,22 @@ export function mm2ToM2(area: Mm2): number {
   return area / 1_000_000;
 }
 
+/**
+ * Small deterministic PRNG (mulberry32). Returns a function yielding successive
+ * pseudo-random numbers in [0, 1). Keeps the domain pure and reproducible: the
+ * same seed always yields the same sequence, so a randomised plan never shifts
+ * between renders or test runs (no `Math.random`).
+ */
+export function makeRng(seed: number): () => number {
+  let a = seed >>> 0 || 1; // avoid a zero state
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /** m² → mm² for input normalisation. */
 export function m2ToMm2(area: number): Mm2 {
   return area * 1_000_000;

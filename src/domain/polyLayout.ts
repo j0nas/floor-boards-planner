@@ -18,7 +18,7 @@ import { type DemandPiece, assignCuts } from "./cutting.ts";
 import { type Ring, clipRings, insetRoom, ringsArea } from "./poly.ts";
 import { roomOutline } from "./room.ts";
 import { markUndersized, undersizedDiagnostic } from "./slivers.ts";
-import { planRowPieces } from "./stagger.ts";
+import { pickStaggerIndex, planRowPieces } from "./stagger.ts";
 import { resolveBoardsPerPack } from "./validate.ts";
 import { computeMaterial } from "./waste.ts";
 import type {
@@ -32,7 +32,7 @@ import type {
   Point,
   StaggerInfo,
 } from "./types.ts";
-import { EPS, type Mm, approxEq, gte } from "./units.ts";
+import { EPS, type Mm, approxEq, gte, makeRng } from "./units.ts";
 
 interface Box {
   minX: number;
@@ -148,10 +148,11 @@ function rowTiling(
  * could drop a seam a quarter-board from its neighbour while the plan still
  * claimed a healthy stagger.
  *
- * The search saturates each clearance at `minStagger` (once a row is far enough
+ * The picker saturates each clearance at `minStagger` (once a row is far enough
  * it stops competing) and is lexicographic: clear the immediately adjacent row
  * first, then the skip row (avoids the every-other-row ladder), then maximise the
- * overall spread.
+ * overall spread. `randomness > 0` instead picks a seeded-random start from the
+ * still-valid band (`rand` is one PRNG draw), for a less symmetric pattern.
  */
 function chooseRowStart(
   spans: readonly { min: Mm; max: Mm }[],
@@ -160,6 +161,8 @@ function chooseRowStart(
   bl: Mm,
   minPiece: Mm,
   minStagger: Mm,
+  randomness: number,
+  rand: number,
 ): { startLen: Mm; seams: number[]; perSpan: Mm[][]; gapPrev: number } {
   // Candidate starts: a full-board start (no leading cut), plus a fine sweep over
   // the legal start-piece range — fine enough to resolve a ~minStagger window.
@@ -167,31 +170,19 @@ function chooseRowStart(
   const steps = 64;
   for (let i = 0; i <= steps; i++) candidates.push(minPiece + ((bl - minPiece) * i) / steps);
 
-  let best: { startLen: Mm; seams: number[]; perSpan: Mm[][]; gapPrev: number } | null = null;
-  let bestKey: readonly [number, number, number] | null = null;
-  for (const startLen of candidates) {
+  const scored = candidates.map((startLen) => {
     const { perSpan, seams } = rowTiling(spans, bl, startLen, minPiece);
-    const gapPrev = seamGap(seams, prev);
-    const gapPrev2 = seamGap(seams, prev2);
-    // Tertiary objective: maximise the true smallest clearance, which centres the
-    // row within its feasible band instead of hugging the minStagger floor.
-    const trueMin = Math.min(gapPrev, gapPrev2);
-    const key = [
-      Math.min(gapPrev, minStagger),
-      Math.min(gapPrev2, minStagger),
-      Number.isFinite(trueMin) ? trueMin : bl,
-    ] as const;
-    if (
-      !bestKey ||
-      key[0] > bestKey[0] + EPS ||
-      (approxEq(key[0], bestKey[0]) && key[1] > bestKey[1] + EPS) ||
-      (approxEq(key[0], bestKey[0]) && approxEq(key[1], bestKey[1]) && key[2] > bestKey[2] + EPS)
-    ) {
-      bestKey = key;
-      best = { startLen, seams, perSpan, gapPrev };
-    }
-  }
-  return best!;
+    return {
+      startLen,
+      perSpan,
+      seams,
+      gapPrev: seamGap(seams, prev),
+      gapPrev2: seamGap(seams, prev2),
+    };
+  });
+  const idx = pickStaggerIndex(scored, minStagger, bl, randomness, rand);
+  const c = scored[idx]!;
+  return { startLen: c.startLen, seams: c.seams, perSpan: c.perSpan, gapPrev: c.gapPrev };
 }
 
 /** Uniform perimeter gap for a polygon room (the largest of the four walls). */
@@ -240,6 +231,8 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
   let prevSeams: number[] = [];
   let prevSeams2: number[] = [];
   let minObservedStagger = Number.POSITIVE_INFINITY;
+  const randomness = t.staggerRandomness ?? 0;
+  const rng = makeRng(t.staggerSeed ?? 1);
 
   let crossStart = crossMin;
   rowWidths.forEach((rw, k) => {
@@ -253,7 +246,17 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
     const coverage = clipRings([strip], region).filter((r) => Math.abs(ringsArea([r])) > 1);
     const spans = coverage.map((cover) => runRange(cover, runIsX));
 
-    const choice = chooseRowStart(spans, prevSeams, prevSeams2, bl, t.minPiece, t.minStagger);
+    const rand = randomness > 0 ? rng() : 0;
+    const choice = chooseRowStart(
+      spans,
+      prevSeams,
+      prevSeams2,
+      bl,
+      t.minPiece,
+      t.minStagger,
+      randomness,
+      rand,
+    );
     startLens.push(choice.startLen);
     if (Number.isFinite(choice.gapPrev))
       minObservedStagger = Math.min(minObservedStagger, choice.gapPrev);
@@ -358,6 +361,17 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
         "Custom shape: rows are balanced and boards are clipped to the outline, with offcut reuse. Cut pieces around concave corners are an estimate — verify the trickier cuts on site.",
     },
   ];
+  // A custom outline is inset by ONE perimeter gap (the largest of the four), so
+  // be explicit when the per-wall gaps differ — tighter walls get the wider gap.
+  const g = inputs.gap;
+  const gMin = Math.min(g.near, g.far, g.left, g.right);
+  const gMax = Math.max(g.near, g.far, g.left, g.right);
+  if (gMax - gMin > EPS)
+    diagnostics.push({
+      severity: "info",
+      code: "poly.uniformGap",
+      message: `Custom shapes use a single perimeter gap — the largest you set (${Math.round(gMax)} mm) is applied to every wall, so walls set tighter (down to ${Math.round(gMin)} mm) get the wider gap.`,
+    });
   if (!staggerValid)
     diagnostics.push({
       severity: "warn",

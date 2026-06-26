@@ -62,6 +62,19 @@ export interface Tunables {
   squareTol: Mm; // axis treated as square if |near-far| <= this
   minGap: Mm; // min residual expansion gap at the tight taper point
   safetyMarginPct: number; // extra material fraction (e.g. 0.1 = +10%)
+  /**
+   * How much to randomise the seam pattern, 0..1. 0 keeps the deterministic,
+   * regular stagger (every row centred in its feasible band → a symmetric look);
+   * higher values pick a seeded-random row start within the *still-valid* band
+   * (adjacent stagger ≥ minStagger, every piece ≥ minPiece), for an organic,
+   * less repetitive pattern. Never trades away validity for variety.
+   */
+  staggerRandomness: number;
+  /**
+   * Seed for the stagger randomisation. The domain stays pure and reproducible
+   * (no Math.random): same seed → same pattern. Bump it to "reshuffle".
+   */
+  staggerSeed: number;
 }
 
 export interface Inputs {

@@ -51,6 +51,12 @@ export function InputsPanel({ inputs, setInputs, onReset, activePlan }: Props) {
   const flipLocked = activePlan?.geometry.crossVaries === true;
   const flipped = inputs.flip === true;
 
+  const randomnessPct = Math.round(inputs.tunables.staggerRandomness * 100);
+  const setRandomness = (pct: number) =>
+    set((p) => ({ ...p, tunables: { ...p.tunables, staggerRandomness: pct / 100 } }));
+  const reshuffle = () =>
+    set((p) => ({ ...p, tunables: { ...p.tunables, staggerSeed: p.tunables.staggerSeed + 1 } }));
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -143,6 +149,44 @@ export function InputsPanel({ inputs, setInputs, onReset, activePlan }: Props) {
             step={1}
             hint="boards already bought"
           />
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <SectionTitle>Pattern</SectionTitle>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <label htmlFor="stagger-randomness" className="text-xs text-slate-600">
+              Randomness
+            </label>
+            <span className="text-xs tabular-nums text-slate-500">{randomnessPct}%</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="stagger-randomness"
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={randomnessPct}
+              onChange={(e) => setRandomness(Number(e.target.value))}
+              className="h-1.5 w-full cursor-pointer accent-sky-600"
+            />
+            <button
+              type="button"
+              onClick={reshuffle}
+              disabled={randomnessPct === 0}
+              title="Pick a different random pattern"
+              className="shrink-0 rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Reshuffle
+            </button>
+          </div>
+          <span className="text-[10px] text-slate-400">
+            {randomnessPct === 0
+              ? "Regular, repeating stagger — change this if the pattern looks too symmetrical."
+              : "Joints are jittered within the safe range (stagger and piece minimums still hold)."}
+          </span>
         </div>
       </section>
 

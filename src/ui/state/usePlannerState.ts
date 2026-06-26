@@ -23,10 +23,12 @@ function loadInputs(): Inputs {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Inputs;
-      // Back-compat: older saves store the room as four edge measurements.
+      // Back-compat: older saves store the room as four edge measurements, and
+      // predate newer tunables (e.g. staggerRandomness) — merge so they default.
       return {
         ...DEFAULT_INPUTS,
         ...parsed,
+        tunables: { ...DEFAULT_INPUTS.tunables, ...parsed.tunables },
         room: toRoomShape((parsed as { room?: unknown }).room, DEFAULT_INPUTS.room),
       };
     }

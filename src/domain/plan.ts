@@ -183,6 +183,8 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis): Plan {
     t.minPiece,
     t.minStagger,
     t.idealStagger,
+    t.staggerRandomness ?? 0,
+    t.staggerSeed ?? 1,
   );
 
   // Build rows + options.
@@ -262,12 +264,18 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis): Plan {
       code: "piece.belowMin",
       message: `A cut piece (${Math.round(minPieceLen)} mm) is below the minimum piece length (${t.minPiece} mm).`,
     });
-  if (stagger.info.nearMultipleTrap)
+  if (stagger.info.nearMultipleTrap) {
+    const obs = Number.isFinite(stagger.info.minObservedStagger)
+      ? stagger.info.minObservedStagger
+      : stagger.info.achievedStagger;
     diagnostics.push({
       severity: "info",
       code: "stagger.trap",
-      message: `Run length is close to a board multiple (a simple 2-piece pattern would only stagger ~${Math.round(stagger.info.naturalStagger)} mm). Using a ${stagger.info.phases}-piece pattern staggered ${Math.round(stagger.info.achievedStagger)} mm instead.`,
+      message: stagger.info.usedMultiPiecePattern
+        ? `Run length is close to a board multiple (a simple 2-piece pattern would only stagger ~${Math.round(stagger.info.naturalStagger)} mm). Using a ${stagger.info.phases}-piece pattern staggered ${Math.round(stagger.info.achievedStagger)} mm instead.`
+        : `Run length is close to a board multiple (a simple 2-piece pattern would only stagger ~${Math.round(stagger.info.naturalStagger)} mm). The randomised pattern keeps adjacent joints ≥ ${Math.round(obs)} mm.`,
     });
+  }
   if (taper && !taper.ok)
     diagnostics.push({
       severity: "warn",

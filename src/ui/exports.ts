@@ -60,9 +60,11 @@ export function projectFromJson(text: string): Inputs {
   if (parsed.kind !== "floor-planner-project" || !parsed.inputs) {
     throw new Error("Not a valid floor-planner project file.");
   }
-  // Back-compat: migrate a legacy four-measurement room into the polygon shape.
+  // Back-compat: migrate a legacy four-measurement room into the polygon shape,
+  // and backfill tunables added since the file was saved (e.g. staggerRandomness).
   return {
     ...parsed.inputs,
+    tunables: { ...DEFAULT_INPUTS.tunables, ...parsed.inputs.tunables },
     room: toRoomShape((parsed.inputs as { room?: unknown }).room, DEFAULT_INPUTS.room),
   };
 }

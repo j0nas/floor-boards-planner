@@ -186,4 +186,64 @@ describe("polyLayout — stagger is honoured on a stepped custom shape", () => {
     expect(plan.valid).toBe(true);
     expect(plan.diagnostics.some((d) => d.code === "stagger.belowMin")).toBe(false);
   });
+
+  test("randomising the pattern keeps this constrained room's 500 mm floor intact", () => {
+    for (const seed of [1, 2, 7, 42]) {
+      const i = structuredClone(inputs);
+      i.tunables = { ...i.tunables, staggerRandomness: 1, staggerSeed: seed };
+      const p = buildPolygonPlan(i, "X")!;
+      // The deterministic plan here is valid, so randomness must stay valid too.
+      expect(p.valid, `seed=${seed}`).toBe(true);
+      expect(p.stagger.minObservedStagger, `seed=${seed}`).toBeGreaterThanOrEqual(500 - 0.5);
+      expect(p.diagnostics.some((d) => d.code === "stagger.belowMin")).toBe(false);
+    }
+  });
+});
+
+describe("polyLayout — pattern randomness", () => {
+  // A per-row signature of the laid pieces: row index, run-length, and run-start.
+  const rowSig = (plan: ReturnType<typeof buildPolygonPlan>): string =>
+    plan!.pieces
+      .map((p) => {
+        const ys = p.poly.map((q) => q.y);
+        return `${p.rowIndex}:${Math.round(p.faceLength)}@${Math.round(Math.min(...ys))}`;
+      })
+      .sort()
+      .join("|");
+
+  const randomised = (seed: number, minStagger?: number) => {
+    const i = withRoom(L_ROOM);
+    i.tunables = {
+      ...i.tunables,
+      ...(minStagger !== undefined ? { minStagger } : {}),
+      staggerRandomness: 1,
+      staggerSeed: seed,
+    };
+    return buildPolygonPlan(i, "Y")!;
+  };
+
+  test("randomness reshapes the pattern (wide feasible band)", () => {
+    const base = buildPolygonPlan(withRoom(L_ROOM), "Y")!;
+    expect(rowSig(randomised(4))).not.toEqual(rowSig(base));
+  });
+
+  test("a randomised pattern is deterministic by seed and varies between seeds", () => {
+    expect(rowSig(randomised(9))).toEqual(rowSig(randomised(9)));
+    expect(rowSig(randomised(9))).not.toEqual(rowSig(randomised(10)));
+  });
+
+  test("randomness preserves the validity verdict across stagger floors and seeds", () => {
+    for (const minStagger of [300, 600, 900]) {
+      const baseI = withRoom(L_ROOM);
+      baseI.tunables = { ...baseI.tunables, minStagger };
+      const base = buildPolygonPlan(baseI, "Y")!;
+      for (const seed of [1, 2, 7, 42]) {
+        const p = randomised(seed, minStagger);
+        // Random pick stays within the same valid band → identical verdict.
+        expect(p.valid, `minStagger=${minStagger} seed=${seed}`).toBe(base.valid);
+        if (base.valid)
+          expect(p.stagger.minObservedStagger).toBeGreaterThanOrEqual(minStagger - 0.5);
+      }
+    }
+  });
 });

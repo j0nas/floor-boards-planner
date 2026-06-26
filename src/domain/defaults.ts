@@ -36,6 +36,8 @@ export const DEFAULT_TUNABLES: Tunables = {
   squareTol: 15,
   minGap: 5, // residual gap at the tight taper point — Pergo's ~5 mm baseline (NO)
   safetyMarginPct: 0.1,
+  staggerRandomness: 0, // default to the regular, deterministic pattern
+  staggerSeed: 1, // any positive integer; "reshuffle" just increments it
 };
 
 /** Default room as edge measurements (≈ 4.0 × 3.0 m square). */
