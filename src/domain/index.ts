@@ -31,4 +31,5 @@ export {
 } from "./room.ts";
 export { insetRoom, clipRings, offsetRings, ringsArea, type Ring } from "./poly.ts";
 export { checkPlan, usableFloor } from "./verify.ts";
+export { openingRing, openingRings, perWallGaps, wallGap, wallLength } from "./openings.ts";
 export { mm2ToM2, m2ToMm2 } from "./units.ts";

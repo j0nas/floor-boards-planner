@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test } from "vite-plus/test";
 import { App } from "./App.tsx";
 
@@ -21,4 +21,12 @@ test("App shows the orientation comparison table", () => {
   render(<App />);
   expect(screen.getByText(/Orientation & borders/i)).toBeInTheDocument();
   expect(screen.getAllByText(/Along width|Along length/i).length).toBeGreaterThan(0);
+});
+
+test("adding a door opening lays floor into it and keeps the self-check green", () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: /Add door opening/i }));
+  expect(screen.getByLabelText(/Door 1 wall/i)).toBeInTheDocument();
+  expect(screen.getAllByText(/door 1/).length).toBeGreaterThan(0);
+  expect(screen.getByText(/Self-check passed/i)).toBeInTheDocument();
 });

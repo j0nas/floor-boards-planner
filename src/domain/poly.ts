@@ -20,7 +20,7 @@ import {
   intersectD,
   unionD,
 } from "clipper2-ts";
-import type { Mm, Mm2 } from "./units.ts";
+import { type Mm, type Mm2, differsOnTape } from "./units.ts";
 import type { Point } from "./types.ts";
 
 /** One closed ring of points in room millimetres. */
@@ -69,4 +69,108 @@ export function differenceRings(subject: readonly Ring[], clip: readonly Ring[])
 /** Total signed area of a ring set in mm² (holes subtract by winding). */
 export function ringsArea(rings: readonly Ring[]): Mm2 {
   return areaPathsD(toPaths(rings));
+}
+
+/** The ring wound counter-clockwise (positive area), so unions never cancel. */
+export function ccw(ring: Ring): Ring {
+  return ringsArea([ring]) < 0 ? [...ring].reverse() : ring;
+}
+
+/** True when the ring is convex (either winding); an L-shaped (notched) piece is not. */
+export function isConvexRing(ring: Ring): boolean {
+  let sign = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i]!;
+    const b = ring[(i + 1) % ring.length]!;
+    const c = ring[(i + 2) % ring.length]!;
+    const z = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (Math.abs(z) < 1e-6) continue;
+    if (sign === 0) sign = Math.sign(z);
+    else if (Math.sign(z) !== sign) return false;
+  }
+  return true;
+}
+
+/** Axis-aligned bounds of a ring set. */
+export interface Box {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+export function bboxOf(rings: readonly Ring[]): Box {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const r of rings)
+    for (const p of r) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  return { minX, minY, maxX, maxY };
+}
+
+/**
+ * Extent of a ring along one axis where it crosses a line: with `fixCross` the
+ * line is cross = `at` and the run extent is returned, otherwise the line is
+ * run = `at` and the cross extent is returned (0 when the line misses).
+ */
+function chordAt(ring: Ring, runIsX: boolean, fixCross: boolean, at: number): number {
+  const fixed = (p: Point) => (runIsX ? p.y : p.x);
+  const other = (p: Point) => (runIsX ? p.x : p.y);
+  const get = fixCross ? fixed : other;
+  const measure = fixCross ? other : fixed;
+  let lo = Number.POSITIVE_INFINITY;
+  let hi = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i]!;
+    const b = ring[(i + 1) % ring.length]!;
+    const fa = get(a) - at;
+    const fb = get(b) - at;
+    if (fa > 0 === fb > 0 && fa !== 0 && fb !== 0) continue;
+    if (fa === fb) {
+      lo = Math.min(lo, measure(a), measure(b));
+      hi = Math.max(hi, measure(a), measure(b));
+      continue;
+    }
+    const m = measure(a) + (fa / (fa - fb)) * (measure(b) - measure(a));
+    lo = Math.min(lo, m);
+    hi = Math.max(hi, m);
+  }
+  return hi > lo ? hi - lo : 0;
+}
+
+/**
+ * Cut dimensions of a clipped piece, the way they are marked on a board: the
+ * length along each long edge (they differ where a wall cuts the end at an
+ * angle) and the width at each end (they differ where a wall tapers it).
+ */
+export function measurePiece(ring: Ring, runIsX: boolean) {
+  const b = bboxOf([ring]);
+  const [uMin, uMax, vMin, vMax] = runIsX
+    ? [b.minX, b.maxX, b.minY, b.maxY]
+    : [b.minY, b.maxY, b.minX, b.maxX];
+  const du = Math.min(0.05, (uMax - uMin) / 4);
+  const dv = Math.min(0.05, (vMax - vMin) / 4);
+  const lenA = chordAt(ring, runIsX, true, vMin + dv);
+  const lenB = chordAt(ring, runIsX, true, vMax - dv);
+  const wStart = chordAt(ring, runIsX, false, uMin + du);
+  const wEnd = chordAt(ring, runIsX, false, uMax - du);
+  const faceLength = uMax - uMin;
+  const faceWidth = vMax - vMin;
+  const shortLen = Math.min(lenA, lenB);
+  const narrow = Math.min(wStart, wEnd);
+  return {
+    lenA,
+    lenB,
+    faceLength,
+    faceLengthShort: differsOnTape(faceLength, shortLen) ? shortLen : undefined,
+    faceWidth,
+    faceWidthNarrow: differsOnTape(faceWidth, narrow) ? narrow : undefined,
+    narrowAtEnd: differsOnTape(faceWidth, narrow) ? wEnd < wStart : undefined,
+  };
 }

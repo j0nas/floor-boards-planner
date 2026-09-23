@@ -32,14 +32,56 @@ function isConvex(ring: readonly Point[]): boolean {
 }
 
 /**
- * The floor boards may cover: a convex four-wall room inset by each wall's own
- * gap; any other outline inset by the largest gap (as the polygon engine does).
+ * The floor boards must cover: a convex four-wall room inset by each wall's own
+ * gap (any other outline by the largest gap, as the polygon engine does), plus
+ * each door opening's clear width from its threshold back to the floor. With
+ * `underFrames`, also the strips beside each opening that slide under the
+ * undercut frame — floor boards may cover, but need not.
  */
-export function usableFloor(inputs: Inputs): Ring[] {
+export function usableFloor(inputs: Inputs, underFrames = false): Ring[] {
   const outline = inputs.room.outline;
   const g = inputs.gap;
-  if (!asRect(inputs.room) || !isConvex(outline))
-    return insetRoom(outline, Math.max(g.near, g.far, g.left, g.right));
+  const perWall = asRect(inputs.room) !== null && isConvex(outline);
+  const room = perWall
+    ? perWallFloor(inputs)
+    : insetRoom(outline, Math.max(g.near, g.far, g.left, g.right));
+  const orient = Math.sign(ringsArea([outline])) || 1;
+  const doors: Ring[] = [];
+  for (const o of inputs.openings ?? []) {
+    const a = outline[o.wall];
+    const b = outline[(o.wall + 1) % outline.length];
+    if (!a || !b) continue;
+    const gap = perWall
+      ? [g.near, g.right, g.far, g.left][o.wall]!
+      : Math.max(g.near, g.far, g.left, g.right);
+    // Along the wall from its start corner; across it from the threshold (outside
+    // the wall face) into the room to just past the floor's edge.
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const along = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
+    const into = { x: -along.y * orient, y: along.x * orient };
+    const corner = (s: number, t: number) => ({
+      x: a.x + along.x * s + into.x * t,
+      y: a.y + along.y * s + into.y * t,
+    });
+    const frame = underFrames ? o.tuck : 0;
+    const s0 = o.offset - frame;
+    const s1 = o.offset + o.width + frame;
+    const door: Ring = [
+      corner(s0, -o.depth),
+      corner(s0, gap + 1),
+      corner(s1, gap + 1),
+      corner(s1, -o.depth),
+    ];
+    doors.push(ringsArea([door]) < 0 ? [...door].reverse() : door);
+  }
+  if (!doors.length) return room;
+  return unionRings([...room.map((r) => (ringsArea([r]) < 0 ? [...r].reverse() : r)), ...doors]);
+}
+
+/** A convex four-wall room: the outline clipped by each wall's inset half-plane. */
+function perWallFloor(inputs: Inputs): Ring[] {
+  const outline = inputs.room.outline;
+  const g = inputs.gap;
   // Canonical quad edges: near, right, far, left.
   const gaps = [g.near, g.right, g.far, g.left];
   const orient = Math.sign(ringsArea([outline])) || 1;
@@ -128,7 +170,9 @@ export function checkPlan(inputs: Inputs, plan: Plan): string[] {
   };
 
   // ── 1. The pieces tile the usable floor exactly: inside it, no overlaps, no holes.
+  // (Under a door frame, beside the opening, is floor they may cover but needn't.)
   const floor = usableFloor(inputs);
+  const allowed = inputs.openings?.length ? usableFloor(inputs, true) : floor;
   const floorArea = area(floor);
   const tol = Math.max(10, floorArea * AREA_REL_TOL);
   let pieceSum = 0;
@@ -137,18 +181,20 @@ export function checkPlan(inputs: Inputs, plan: Plan): string[] {
     if (a <= 0) fail(`${p.id}: empty piece`);
     pieceSum += a;
     // Clipper rounds to a 0.001 mm grid, so allow a film that thin along the edges.
-    const outside = area(differenceRings([p.poly], floor));
+    const outside = area(differenceRings([p.poly], allowed));
     if (outside > 1 + 0.003 * perimeter(p.poly))
       fail(`${p.id}: ${outside.toFixed(1)} mm² lies in the expansion gap or outside the room`);
   }
-  const covered = area(unionRings(plan.pieces.map((p) => p.poly)));
+  const laid = unionRings(plan.pieces.map((p) => p.poly));
+  const covered = area(laid);
   if (Math.abs(pieceSum - covered) > tol)
     fail(`pieces overlap by ${(pieceSum - covered).toFixed(0)} mm²`);
-  if (Math.abs(covered - floorArea) > tol)
-    fail(`pieces cover ${covered.toFixed(0)} mm² of a ${floorArea.toFixed(0)} mm² floor`);
-  if (Math.abs(plan.material.coveredAreaMm2 - floorArea) > tol)
+  const bare = area(differenceRings(floor, laid));
+  if (bare > tol)
+    fail(`${bare.toFixed(0)} mm² of the ${floorArea.toFixed(0)} mm² floor is left bare`);
+  if (Math.abs(plan.material.coveredAreaMm2 - covered) > tol)
     fail(
-      `material covered area ${plan.material.coveredAreaMm2.toFixed(0)} ≠ floor ${floorArea.toFixed(0)} mm²`,
+      `material covered area ${plan.material.coveredAreaMm2.toFixed(0)} ≠ laid ${covered.toFixed(0)} mm²`,
     );
 
   // ── 2. Every piece comes from one board, and its stated size is its drawn size.
@@ -246,7 +292,10 @@ export function checkPlan(inputs: Inputs, plan: Plan): string[] {
     const p = l.piece;
     const short = Math.min(p.faceLength, p.faceLengthShort ?? p.faceLength);
     const narrow = Math.min(p.faceWidth, p.faceWidthNarrow ?? p.faceWidth);
-    const below = short < t.minPiece - LEN_TOL || narrow < t.minRowWidth - LEN_TOL;
+    // A notched (L-shaped) piece's narrow end is a tab into a doorway, not a sliver.
+    const tabbed = !isConvex(p.poly);
+    const below =
+      short < t.minPiece - LEN_TOL || (tabbed ? p.faceWidth : narrow) < t.minRowWidth - LEN_TOL;
     if (below && !p.undersized)
       fail(
         `${p.id}: ${short.toFixed(0)}×${narrow.toFixed(0)} mm is below the minimum but not flagged`,

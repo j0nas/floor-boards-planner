@@ -6,6 +6,7 @@ import {
   type RectMeasurements,
   asRect,
   rectRoom,
+  openingRings,
   roomOutline,
   uniformGap,
 } from "../../domain/index.ts";
@@ -31,7 +32,12 @@ interface Props {
 export function PlanCanvas({ inputs, setInputs, plan, pieces, gapWarn }: Props) {
   const { room, gap } = inputs;
   const rect = asRect(room);
-  const proj = useMemo(() => fitProjection([...roomOutline(room)], 1000, 40), [room]);
+  const doors = useMemo(() => openingRings(inputs), [inputs]);
+  // Fit the drawing to the room and any doorway reaching past its walls.
+  const proj = useMemo(
+    () => fitProjection([...roomOutline(room), ...doors.flatMap((d) => d.ring)], 1000, 40),
+    [room, doors],
+  );
 
   const setRect = (k: keyof RectMeasurements, v: number) =>
     setInputs((p) => {
@@ -70,7 +76,13 @@ export function PlanCanvas({ inputs, setInputs, plan, pieces, gapWarn }: Props) 
         <div />
       )}
       <div className="relative w-full">
-        <SvgPlan plan={plan} pieces={pieces} room={room} proj={proj} />
+        <SvgPlan
+          plan={plan}
+          pieces={pieces}
+          room={room}
+          doors={doors.map((d) => d.ring)}
+          proj={proj}
+        />
         <div className="absolute left-2 top-2">
           <EditableDim
             value={gap.near}

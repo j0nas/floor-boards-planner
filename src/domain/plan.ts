@@ -1,12 +1,21 @@
 import { balanceRows, type LayoutOptionDraft, type RowWidth } from "./balance.ts";
 import { chooseAxis } from "./compare.ts";
-import { type DemandPiece, assignCuts } from "./cutting.ts";
-import { computeGeometry, crossWidthAt, runLengthAt, toRoom } from "./geometry.ts";
-import { clipRings, ringsArea } from "./poly.ts";
-import { buildPolygonPlan } from "./polyLayout.ts";
+import { assignCuts, demandFromPieces } from "./cutting.ts";
+import { computeGeometry, crossWidthAt, runLengthAt, toLocal, toRoom } from "./geometry.ts";
+import { type Doorway, openingOnly, passes } from "./openings.ts";
+import {
+  type Ring,
+  clipRings,
+  differenceRings,
+  isConvexRing,
+  measurePiece,
+  ringsArea,
+  unionRings,
+} from "./poly.ts";
+import { assignRoles, buildPolygonPlan, chooseRowStart } from "./polyLayout.ts";
 import { asRect, longAxis } from "./room.ts";
 import { markUndersized, undersizedDiagnostic } from "./slivers.ts";
-import { type RowRun, planRowPieces, planStagger, seamsOf } from "./stagger.ts";
+import { type RowRun, planStagger, seamsOf, tileRun } from "./stagger.ts";
 import { computeTaper } from "./taper.ts";
 import type {
   Axis,
@@ -25,6 +34,71 @@ import { resolveBoardsPerPack, validateInputs } from "./validate.ts";
 import { computeMaterial } from "./waste.ts";
 import { EPS, type Mm, approxEq, differsOnTape, gte, lt } from "./units.ts";
 
+// ───────────────────────── doorways ─────────────────────────
+
+/** Far enough to span any room, for bands clipped against a doorway. */
+const BIG: Mm = 1e6;
+
+/**
+ * The door openings of a quad room, sorted by how the rows meet them. An
+ * opening in a run-start or run-end wall is reached by the rows passing it: their
+ * first or last piece runs on into the doorway. An opening in a cross-start or
+ * cross-end wall lies beyond the first or last row, so it gets strip rows of its
+ * own, clicked onto that row.
+ */
+interface Doorways {
+  runSide: (Doorway & { side: "start" | "end" })[];
+  crossSide: (Doorway & { side: "start" | "end" })[];
+}
+
+function doorways(inputs: Inputs, geom: Geometry): Doorways {
+  // Walls in outline order (0 near, 1 right, 2 far, 3 left) → local side.
+  const sides =
+    geom.runAxis === "X"
+      ? (["crossStart", "runEnd", "crossEnd", "runStart"] as const)
+      : (["runStart", "crossEnd", "runEnd", "crossStart"] as const);
+  const runSide: Doorways["runSide"] = [];
+  const crossSide: Doorways["crossSide"] = [];
+  for (const o of openingOnly([geom.inner], inputs)) {
+    const side = sides[inputs.openings![o.index]!.wall]!;
+    if (side === "crossStart" || side === "crossEnd")
+      crossSide.push({ ...o, side: side === "crossStart" ? "start" : "end" });
+    else runSide.push({ ...o, side: side === "runStart" ? "start" : "end" });
+  }
+  return { runSide, crossSide };
+}
+
+/** Local (run, cross) bounds of a ring set. */
+function localBounds(geom: Geometry, rings: readonly Ring[]) {
+  let uMin = Infinity;
+  let uMax = -Infinity;
+  let vMin = Infinity;
+  let vMax = -Infinity;
+  for (const r of rings)
+    for (const p of r) {
+      const { u, v } = toLocal(geom, p);
+      uMin = Math.min(uMin, u);
+      uMax = Math.max(uMax, u);
+      vMin = Math.min(vMin, v);
+      vMax = Math.max(vMax, v);
+    }
+  return { uMin, uMax, vMin, vMax };
+}
+
+/** A local (run, cross) rectangle in room mm. */
+function localRect(geom: Geometry, u0: Mm, u1: Mm, v0: Mm, v1: Mm): Ring {
+  return [toRoom(geom, u0, v0), toRoom(geom, u1, v0), toRoom(geom, u1, v1), toRoom(geom, u0, v1)];
+}
+
+/** The largest ring of a clip result (null when nothing is left). */
+function largest(rings: readonly Ring[]): Ring | null {
+  return (
+    rings
+      .filter((r) => Math.abs(ringsArea([r])) > 1)
+      .sort((a, b) => Math.abs(ringsArea([b])) - Math.abs(ringsArea([a])))[0] ?? null
+  );
+}
+
 // ───────────────────────── materialisation ─────────────────────────
 
 /** A row's cross position, width and usable run, before stagger. */
@@ -36,14 +110,18 @@ interface RowFrame {
   isEndRow: boolean;
   isRipped: boolean;
   isTaper: boolean;
+  /** The doorways its first / last piece reaches into (a row can pass two). */
+  leadOpenings: number[];
+  trailOpenings: number[];
 }
 
 /**
  * Place a draft's rows across the usable floor and measure each row's own run:
  * the run-end wall may slant, so each row (and each of its two long edges) can
- * end at a different length. The row's outer edge stops at the far corner.
+ * end at a different length. The row's outer edge stops at the far corner. A row
+ * passing a doorway in a run-start / run-end wall reaches into it (lead / trail).
  */
-function frameRows(draft: LayoutOptionDraft, geom: Geometry, bw: Mm): RowFrame[] {
+function frameRows(draft: LayoutOptionDraft, geom: Geometry, bw: Mm, doors: Doorways): RowFrame[] {
   const lastIdx = draft.rowWidths.length - 1;
   const crossMin = Math.min(geom.crossWidthStart, geom.crossWidthEnd);
   let acc = 0;
@@ -54,15 +132,35 @@ function frameRows(draft: LayoutOptionDraft, geom: Geometry, bw: Mm): RowFrame[]
     const edgeA = runLengthAt(geom, v0);
     const edgeB = runLengthAt(geom, Math.min(v1, geom.crossWidthEnd));
     const narrow = Math.min(v1, crossMin) - v0;
-    return {
+    const run: RowRun = { length: Math.max(edgeA, edgeB), short: Math.min(edgeA, edgeB) };
+    const frame: RowFrame = {
       crossStart: v0,
       width: rw.width,
       narrow,
-      run: { length: Math.max(edgeA, edgeB), short: Math.min(edgeA, edgeB) },
+      run,
       isEndRow: rw.isEndRow,
       isRipped: rw.isRipped || lt(narrow, bw),
       isTaper: geom.crossVaries && i === lastIdx,
+      leadOpenings: [],
+      trailOpenings: [],
     };
+    const band = localRect(geom, -BIG, BIG, v0, v1);
+    for (const door of doors.runSide) {
+      if (!passes(band, door)) continue; // only clips the frame: no tab under it
+      const reach = clipRings([band], door.rings).filter((r) => Math.abs(ringsArea([r])) > 1);
+      if (!reach.length) continue;
+      // A row passing the doorway is clipped with it joined on, even where a
+      // slanted wall leaves the doorway within the row's reach already.
+      const { uMin, uMax } = localBounds(geom, reach);
+      if (door.side === "start") {
+        run.lead = Math.max(run.lead ?? 0, -uMin, 0);
+        frame.leadOpenings.push(door.index);
+      } else {
+        run.trail = Math.max(run.trail ?? 0, uMax - run.length, 0);
+        frame.trailOpenings.push(door.index);
+      }
+    }
+    return frame;
   });
 }
 
@@ -70,7 +168,7 @@ function frameRows(draft: LayoutOptionDraft, geom: Geometry, bw: Mm): RowFrame[]
 function buildRows(frames: readonly RowFrame[], startOffsets: readonly Mm[], bl: Mm): Row[] {
   return frames.map((f, i): Row => {
     const startOffset = startOffsets[i] ?? f.run.length;
-    const pieceLengths = planRowPieces(f.run.length, bl, startOffset);
+    const pieceLengths = tileRun(f.run, bl, startOffset);
     return {
       index: i,
       crossStart: f.crossStart,
@@ -84,6 +182,8 @@ function buildRows(frames: readonly RowFrame[], startOffsets: readonly Mm[], bl:
       pieceLengths,
       seamPositions: seamsOf(pieceLengths, f.run.length),
       startOffset,
+      ...(f.run.lead ? { lead: f.run.lead } : {}),
+      ...(f.run.trail ? { trail: f.run.trail } : {}),
     };
   });
 }
@@ -93,6 +193,121 @@ function ifDiffers(a: Mm, b: Mm): Mm | undefined {
   return differsOnTape(a, b) ? Math.min(a, b) : undefined;
 }
 
+/** Role of piece `j` of `n` in a row or span, unless it spans a whole board. */
+function roleAt(j: number, n: number, whole: boolean): PieceRole {
+  if (whole) return "full";
+  if (n === 1) return "free";
+  return j === 0 ? "start" : j === n - 1 ? "end" : "full";
+}
+
+/** A row's first / last piece where it reaches into a doorway. */
+function doorwayPiece(
+  geom: Geometry,
+  row: Row,
+  j: number,
+  n: number,
+  poly: Ring,
+  bl: Mm,
+  bw: Mm,
+  frame: RowFrame,
+  intoLead: boolean,
+): Piece {
+  const m = measurePiece(poly, geom.runAxis === "X");
+  const whole = approxEq(m.lenA, bl) && approxEq(m.lenB, bl);
+  return {
+    id: `r${row.index}-p${j}`,
+    rowIndex: row.index,
+    indexInRow: j,
+    poly,
+    faceLength: m.faceLength,
+    faceLengthShort: m.faceLengthShort,
+    faceWidth: m.faceWidth,
+    faceWidthNarrow: m.faceWidthNarrow,
+    narrowAtEnd: m.narrowAtEnd,
+    kind: row.isTaper ? "taper" : whole ? "full" : "cut-length",
+    role: roleAt(j, n, whole),
+    isRipped: lt(Math.min(m.faceWidth, m.faceWidthNarrow ?? m.faceWidth), bw),
+    opening: (intoLead ? frame.leadOpenings : frame.trailOpenings)[0],
+    notched: !isConvexRing(poly),
+  };
+}
+
+/**
+ * Strip rows for doorways beyond the first or last row: the floor carries on
+ * into the opening as extra rows (usually one narrow strip), clicked onto that
+ * row and staggered against it. Rows are numbered on outward from the room's
+ * (−1, −2, … before the first row; n, n+1, … after the last).
+ */
+function doorwayStrips(
+  geom: Geometry,
+  rows: readonly Row[],
+  doors: Doorways,
+  t: Inputs["tunables"],
+  bl: Mm,
+  bw: Mm,
+): Piece[] {
+  const pieces: Piece[] = [];
+  const runIsX = geom.runAxis === "X";
+  for (const door of doors.crossSide) {
+    const { vMin, vMax } = localBounds(geom, door.rings);
+    const start = door.side === "start";
+    const edge = rows[start ? 0 : rows.length - 1];
+    if (!edge) continue;
+    const total = start ? -vMin : vMax - vMin;
+    const drafts = balanceRows(total, bw, t.minRowWidth);
+    const widths = (drafts.find((d) => d.recommended) ?? drafts[0])!.rowWidths.map((w) => w.width);
+    let prev: number[] = [...edge.seamPositions];
+    let prev2: number[] = [];
+    let acc = 0;
+    widths.forEach((w, k) => {
+      const [va, vb] = start ? [-(acc + w), -acc] : [vMin + acc, vMin + acc + w];
+      acc += w;
+      const rowIndex = start ? -1 - k : rows.length + k;
+      const coverage = clipRings([localRect(geom, -BIG, BIG, va, vb)], door.rings).filter(
+        (r) => Math.abs(ringsArea([r])) > 1,
+      );
+      const spans = coverage.map((r) => {
+        const b = localBounds(geom, [r]);
+        return { min: b.uMin, max: b.uMax };
+      });
+      const choice = chooseRowStart(spans, prev, prev2, bl, t.minPiece, t.minStagger, 0, 0);
+      let idx = 0;
+      const first = pieces.length;
+      spans.forEach((span, s) => {
+        const segs = choice.perSpan[s]!;
+        let u = span.min;
+        segs.forEach((len, j) => {
+          const poly = largest(clipRings([localRect(geom, u, u + len, va, vb)], door.rings));
+          u += len;
+          if (!poly) return;
+          const m = measurePiece(poly, runIsX);
+          const whole = approxEq(m.lenA, bl) && approxEq(m.lenB, bl);
+          pieces.push({
+            id: `d${door.index}-r${rowIndex}-p${idx}`,
+            rowIndex,
+            indexInRow: idx++,
+            poly,
+            faceLength: m.faceLength,
+            faceLengthShort: m.faceLengthShort,
+            faceWidth: m.faceWidth,
+            faceWidthNarrow: m.faceWidthNarrow,
+            narrowAtEnd: m.narrowAtEnd,
+            kind: whole && approxEq(m.faceWidth, bw) ? "full" : "cut-length",
+            role: roleAt(j, segs.length, whole),
+            isRipped: lt(Math.min(m.faceWidth, m.faceWidthNarrow ?? m.faceWidth), bw),
+            opening: door.index,
+            notched: !isConvexRing(poly),
+          });
+        });
+      });
+      assignRoles(pieces.slice(first), runIsX, bl);
+      prev2 = prev;
+      prev = choice.seams;
+    });
+  }
+  return pieces;
+}
+
 /**
  * Build the pieces for a set of rows. Each piece is its board rectangle clipped
  * to the usable floor, so a slanted wall is followed exactly. Dimensions are
@@ -100,7 +315,14 @@ function ifDiffers(a: Mm, b: Mm): Mm | undefined {
  * the length along each long edge (they differ for an angled end cut) and the
  * width at each end (they differ for a taper rip).
  */
-function buildPieces(geom: Geometry, rows: readonly Row[], bl: Mm, bw: Mm): Piece[] {
+function buildPieces(
+  geom: Geometry,
+  rows: readonly Row[],
+  frames: readonly RowFrame[],
+  bl: Mm,
+  bw: Mm,
+  doors: Doorways,
+): Piece[] {
   const pieces: Piece[] = [];
   for (const row of rows) {
     const v0 = row.crossStart;
@@ -110,6 +332,27 @@ function buildPieces(geom: Geometry, rows: readonly Row[], bl: Mm, bw: Mm): Piec
     let u0 = 0;
     row.pieceLengths.forEach((len, j) => {
       const u1 = u0 + len;
+      // A first / last piece reaching into a doorway is its rectangle clipped to
+      // the floor with the doorway joined on, measured from the shape it takes.
+      const frame = frames[row.index]!;
+      const intoLead = j === 0 && frame.leadOpenings.length > 0;
+      const intoTrail = j === n - 1 && frame.trailOpenings.length > 0;
+      if (intoLead || intoTrail) {
+        const lead = intoLead ? (row.lead ?? 0) : 0;
+        const trail = intoTrail ? (row.trail ?? 0) : 0;
+        const passed = doors.runSide.filter(
+          (d) =>
+            (intoLead && frame.leadOpenings.includes(d.index)) ||
+            (intoTrail && frame.trailOpenings.includes(d.index)),
+        );
+        // Join the whole opening (it overlaps the floor's edge), not just the
+        // part beyond it: two shapes that merely touch may not merge.
+        const floor = unionRings([geom.inner, ...passed.map((d) => d.full)]);
+        const poly = largest(clipRings([localRect(geom, u0 - lead, u1 + trail, v0, v1)], floor));
+        if (poly) pieces.push(doorwayPiece(geom, row, j, n, poly, bl, bw, frame, intoLead));
+        u0 = u1;
+        return;
+      }
       const lenA = Math.min(u1, runLengthAt(geom, v0)) - u0;
       const lenB = Math.min(u1, runLengthAt(geom, vOuter)) - u0;
       const wStart = Math.min(v1, crossWidthAt(geom, u0)) - v0;
@@ -139,15 +382,7 @@ function buildPieces(geom: Geometry, rows: readonly Row[], bl: Mm, bw: Mm): Piec
       }
 
       const whole = approxEq(lenA, bl) && approxEq(lenB, bl);
-      const role: PieceRole = whole
-        ? "full"
-        : n === 1
-          ? "free"
-          : j === 0
-            ? "start"
-            : j === n - 1
-              ? "end"
-              : "full";
+      const role = roleAt(j, n, whole);
       pieces.push({
         id: `r${row.index}-p${j}`,
         rowIndex: row.index,
@@ -166,21 +401,6 @@ function buildPieces(geom: Geometry, rows: readonly Row[], bl: Mm, bw: Mm): Piec
     });
   }
   return pieces;
-}
-
-function demandFromPieces(pieces: readonly Piece[]): DemandPiece[] {
-  return pieces.map((p) => ({
-    pieceId: p.id,
-    rowIndex: p.rowIndex,
-    indexInRow: p.indexInRow,
-    length: p.faceLength,
-    lengthShort: p.faceLengthShort,
-    width: p.faceWidth,
-    widthNarrow: p.faceWidthNarrow,
-    narrowAtEnd: p.narrowAtEnd,
-    kind: p.kind,
-    role: p.role,
-  }));
 }
 
 // ───────────────────────── per-axis plan ─────────────────────────
@@ -252,8 +472,10 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: nu
     valid: d.valid,
   }));
 
-  // Rows, each with its own run (row ends differ where the run-end wall slants).
-  const frames = frameRows(draft, geom, board.width);
+  // Rows, each with its own run (row ends differ where the run-end wall slants,
+  // and rows passing a doorway reach into it).
+  const doors = doorways(inputs, geom);
+  const frames = frameRows(draft, geom, board.width, doors);
   const stagger = planStagger(
     frames.map((f) => f.run),
     board.length,
@@ -265,7 +487,10 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: nu
   );
   const rows = buildRows(frames, stagger.startOffsets, board.length);
 
-  const pieces = buildPieces(geom, rows, board.length, board.width);
+  const pieces = [
+    ...buildPieces(geom, rows, frames, board.length, board.width, doors),
+    ...doorwayStrips(geom, rows, doors, t, board.length, board.width),
+  ];
   markUndersized(pieces, t.minPiece, t.minRowWidth);
 
   // Taper.
@@ -286,8 +511,16 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: nu
     else p.sourceBoardId = c.source;
   }
 
-  // Material — covered area is the exact usable (gap-inset) floor.
-  const coveredAreaMm2 = Math.abs(ringsArea([geom.inner]));
+  // Material — covered area is the exact usable (gap-inset) floor, plus whatever
+  // the doorway pieces cover (the clear openings, and under the frames they reach).
+  const coveredAreaMm2 =
+    Math.abs(ringsArea([geom.inner])) +
+    pieces
+      .filter((p) => p.opening !== undefined)
+      .reduce(
+        (s, p) => s + Math.abs(ringsArea([differenceRings([p.poly], [geom.inner])].flat())),
+        0,
+      );
   const material = computeMaterial({
     cut,
     board,
@@ -299,6 +532,17 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: nu
 
   // Validity gate + diagnostics.
   const diagnostics: Diagnostic[] = [];
+  // A doorway strip clicks onto the long edge of the row beside it — impossible
+  // when that edge was ripped off to fit the wall.
+  for (const door of doors.crossSide) {
+    const edge = rows[door.side === "start" ? 0 : rows.length - 1];
+    if (edge?.isRipped)
+      diagnostics.push({
+        severity: "warn",
+        code: "opening.rippedEdge",
+        message: `The row along door ${door.index + 1}'s wall is ripped on the doorway side, so the doorway strip can't click onto it — flip the border row to the other wall, or glue the strip.`,
+      });
+  }
   const shortest = (p: Piece) => Math.min(p.faceLength, p.faceLengthShort ?? p.faceLength);
   const minPieceLen = pieces.length ? Math.min(...pieces.map(shortest)) : board.length;
   const draftValid = draft.valid;

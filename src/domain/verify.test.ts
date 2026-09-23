@@ -27,7 +27,7 @@ describe("checkPlan catches a broken plan", () => {
   test("a missing piece leaves the floor uncovered", () => {
     const { inputs, plan } = defaultPlan();
     plan.pieces.pop();
-    expect(checkPlan(inputs, plan).join("\n")).toMatch(/cover/);
+    expect(checkPlan(inputs, plan).join("\n")).toMatch(/left bare/);
   });
 
   test("a stated length that isn't the drawn one", () => {
@@ -65,7 +65,7 @@ describe("checkPlan catches a broken plan", () => {
 
 describe("checkPlan over randomised rooms (both engines, every border option)", () => {
   // Deterministic sweep: square, out-of-square, per-wall gaps, L/notched shapes,
-  // several board sizes, kerf, flip and pattern randomness.
+  // doors, several board sizes, kerf, flip and pattern randomness.
   const rand = makeRng(20260923);
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
   const cases: Inputs[] = [];
@@ -110,6 +110,21 @@ describe("checkPlan over randomised rooms (both engines, every border option)", 
             right: pick([5, 10, 15]),
           };
     inputs.flip = rand() < 0.3;
+    // Up to two doors, anywhere along any wall (overlapping or corner-gap doors
+    // are rejected by validation, leaving no plan to check).
+    inputs.openings = [];
+    for (let d = Math.floor(rand() * 3); d > 0; d--) {
+      const o = inputs.room.outline;
+      const wall = Math.floor(rand() * o.length);
+      const a = o[wall]!;
+      const b = o[(wall + 1) % o.length]!;
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const width = 500 + Math.round(rand() * 600);
+      const tuck = pick([0, 5, 10]);
+      if (len < width + 2 * tuck + 20) continue;
+      const offset = tuck + Math.round(rand() * (len - width - 2 * tuck));
+      inputs.openings.push({ wall, offset, width, depth: pick([0, 40, 80, 120, 250]), tuck });
+    }
     inputs.tunables = {
       ...inputs.tunables,
       kerf: pick([0, 0, 3]),

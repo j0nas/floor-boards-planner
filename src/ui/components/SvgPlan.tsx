@@ -1,10 +1,18 @@
-import { type Piece, type Plan, type RoomShape, roomOutline } from "../../domain/index.ts";
+import {
+  type Piece,
+  type Plan,
+  type Point,
+  type RoomShape,
+  roomOutline,
+} from "../../domain/index.ts";
 import { type Projection, centroidPx, polyToPoints } from "../svg/projection.ts";
 
 interface Props {
   plan: Plan;
   pieces: Piece[];
   room: RoomShape;
+  /** Door openings (room mm) the floor runs into, drawn under the pieces. */
+  doors?: readonly (readonly Point[])[];
   proj: Projection;
 }
 
@@ -35,7 +43,7 @@ function sizeLabel(p: Piece): string {
   return `${len}×${wid}`;
 }
 
-export function SvgPlan({ plan, pieces, room, proj }: Props) {
+export function SvgPlan({ plan, pieces, room, doors = [], proj }: Props) {
   const roomPts = polyToPoints(roomOutline(room), proj);
 
   const labelFits = (p: Piece) => proj.px(p.faceLength) > 46 && proj.px(p.faceWidth) > 16;
@@ -81,6 +89,17 @@ export function SvgPlan({ plan, pieces, room, proj }: Props) {
       {/* Expansion-gap ring drawn in red; boards are drawn on top, leaving only
           the thin perimeter gap showing. */}
       <polygon points={roomPts} fill="#f87171" stroke="#334155" strokeWidth={2.5} />
+      {/* Doorways: the floor runs through the wall to a threshold under the door. */}
+      {doors.map((d, i) => (
+        <polygon
+          key={`door${i}`}
+          points={polyToPoints(d, proj)}
+          fill="#f87171"
+          stroke="#334155"
+          strokeWidth={1.2}
+          strokeDasharray="4 3"
+        />
+      ))}
 
       {pieces.map((p) => {
         const pts = polyToPoints(p.poly, proj);

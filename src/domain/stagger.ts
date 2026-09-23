@@ -27,6 +27,21 @@ export function planRowPieces(L: Mm, bl: Mm, startLen: Mm): Mm[] {
 export interface RowRun {
   length: Mm;
   short: Mm;
+  /** How far the first piece reaches back into a doorway before the run starts. */
+  lead?: Mm;
+  /** How far the last piece reaches on into a doorway past the run's end. */
+  trail?: Mm;
+}
+
+/**
+ * Piece lengths for a row run (see `planRowPieces`). A row that fits in one
+ * board on its own but not with its doorway extensions is split in two.
+ */
+export function tileRun(run: RowRun, bl: Mm, startLen: Mm): Mm[] {
+  const extra = (run.lead ?? 0) + (run.trail ?? 0);
+  if (extra > 0 && run.length <= bl + EPS && run.length + extra > bl + EPS)
+    return startLen < run.length - EPS ? [startLen, run.length - startLen] : [run.length];
+  return planRowPieces(run.length, bl, startLen);
 }
 
 /** A uniform run for `rows` rows (a square run-end wall). */
@@ -39,12 +54,20 @@ export function uniformRuns(L: Mm, rows: number): RowRun[] {
  * the end piece measured along the row's shorter edge.
  */
 export function rowMinPiece(run: RowRun, bl: Mm, startLen: Mm): Mm {
-  const pieces = planRowPieces(run.length, bl, startLen);
+  const pieces = tileRun(run, bl, startLen);
   const lastIdx = pieces.length - 1;
   let mn = Number.POSITIVE_INFINITY;
   pieces.forEach((p, i) => {
     mn = Math.min(mn, i === lastIdx ? p - (run.length - run.short) : p);
   });
+  // A piece reaching into a doorway must still come from one board: a longer
+  // one counts as short by its overshoot, so the planner steers away from it.
+  const lead = run.lead ?? 0;
+  const trail = run.trail ?? 0;
+  const first = pieces[0]! + lead + (lastIdx === 0 ? trail : 0);
+  const last = pieces[lastIdx]! + trail;
+  if (first > bl + EPS) mn = Math.min(mn, bl - first);
+  if (lastIdx > 0 && last > bl + EPS) mn = Math.min(mn, bl - last);
   return mn;
 }
 
@@ -174,7 +197,7 @@ function randomizedRowOffsets(
     for (let i = 0; i <= steps; i++) starts.push(minPiece + ((bl - minPiece) * i) / steps);
     const scored = starts
       .map((s) => {
-        const seams = seamsOf(planRowPieces(L, bl, s), L);
+        const seams = seamsOf(tileRun(run, bl, s), L);
         return {
           startOffset: s,
           seams,
@@ -189,7 +212,7 @@ function randomizedRowOffsets(
       // Degenerate: no legal cut start → a full-board start (validity gated later).
       offsets.push(bl);
       prev2 = prev;
-      prev = seamsOf(planRowPieces(L, bl, bl), L);
+      prev = seamsOf(tileRun(run, bl, bl), L);
       continue;
     }
     const idx = pickStaggerIndex(scored, minStagger, bl, randomness, rng());
@@ -223,7 +246,7 @@ export function planStagger(
 ): StaggerPlan {
   const rowCount = runs.length;
   // Short room: each row is a single piece, no stagger to plan.
-  if (runs.every((run) => run.length <= bl + EPS)) {
+  if (runs.every((run) => run.length + (run.lead ?? 0) + (run.trail ?? 0) <= bl + EPS)) {
     return {
       startOffsets: runs.map((run) => run.length),
       info: {
@@ -260,7 +283,10 @@ export function planStagger(
     // repeat exactly — evaluate each distinct combination once.
     const distinct = new Map<string, { phase: number; run: RowRun }>();
     runs.forEach((run, i) =>
-      distinct.set(`${i % P}|${run.length}|${run.short}`, { phase: i % P, run }),
+      distinct.set(`${i % P}|${run.length}|${run.short}|${run.lead ?? 0}|${run.trail ?? 0}`, {
+        phase: i % P,
+        run,
+      }),
     );
     const rows = [...distinct.values()];
     const samples = Math.min(400, Math.max(40, Math.round(step)));
@@ -313,7 +339,7 @@ export function planStagger(
   // Validate stagger on actual seam positions.
   const seamSets = startOffsets.map((s, i) => {
     const Li = runs[i]!.length;
-    return seamsOf(planRowPieces(Li, bl, s), Li);
+    return seamsOf(tileRun(runs[i]!, bl, s), Li);
   });
   let minObserved = Number.POSITIVE_INFINITY;
   for (let i = 0; i + 1 < seamSets.length; i++) {

@@ -1,4 +1,4 @@
-import type { CutItem, PieceKind, PieceRole, ReuseEntry } from "./types.ts";
+import type { CutItem, Piece, PieceKind, PieceRole, ReuseEntry } from "./types.ts";
 import { EPS, type Mm } from "./units.ts";
 
 /** A piece that must be obtained, before a source board/offcut is assigned. */
@@ -13,6 +13,27 @@ export interface DemandPiece {
   narrowAtEnd?: boolean;
   kind: PieceKind;
   role: PieceRole;
+  /** Door opening the piece reaches into — fitted after the room's rows. */
+  opening?: number;
+  notched?: boolean;
+}
+
+/** The cut demand for a set of pieces: each needs its length from a board. */
+export function demandFromPieces(pieces: readonly Piece[]): DemandPiece[] {
+  return pieces.map((p) => ({
+    pieceId: p.id,
+    rowIndex: p.rowIndex,
+    indexInRow: p.indexInRow,
+    length: p.faceLength,
+    lengthShort: p.faceLengthShort,
+    width: p.faceWidth,
+    widthNarrow: p.faceWidthNarrow,
+    narrowAtEnd: p.narrowAtEnd,
+    kind: p.kind,
+    role: p.role,
+    opening: p.opening,
+    notched: p.notched,
+  }));
 }
 
 export interface CutResult {
@@ -30,9 +51,10 @@ interface Stock {
   spare: Mm;
 }
 
-/** Laying order: row, then position in the row. */
+/** Laying order: the room row by row, then doorway pieces (fitted last). */
 function layOrder(a: DemandPiece, b: DemandPiece): number {
-  return a.rowIndex - b.rowIndex || a.indexInRow - b.indexInRow;
+  const door = (d: DemandPiece) => (d.opening === undefined ? 0 : 1);
+  return door(a) - door(b) || a.rowIndex - b.rowIndex || a.indexInRow - b.indexInRow;
 }
 
 /**
@@ -121,6 +143,8 @@ export function assignCuts(demand: readonly DemandPiece[], bl: Mm, kerf: Mm): Cu
         role: isFull(d) ? "full" : d.role,
         source: boardId,
         reused: j > 0,
+        ...(d.opening === undefined ? {} : { opening: d.opening }),
+        ...(d.notched ? { notched: true } : {}),
       });
       if (j > 0)
         reuseMap.push({

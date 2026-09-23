@@ -1,5 +1,5 @@
 import type { CutItem, Plan } from "../../domain/index.ts";
-import { boardPartners } from "../exports.ts";
+import { boardPartners, rowLabel } from "../exports.ts";
 
 function roleLabel(c: CutItem): string {
   switch (c.role) {
@@ -24,16 +24,28 @@ function lengthText(c: CutItem): string {
 /** Width, with the width at each end (in laying direction) for a taper rip. */
 function widthText(c: CutItem): string {
   if (c.widthNarrow === undefined) return mm(c.width);
+  if (c.notched) return `${mm(c.width)} (tab ${mm(c.widthNarrow)})`;
   return c.narrowAtEnd
     ? `${mm(c.width)}→${mm(c.widthNarrow)}`
     : `${mm(c.widthNarrow)}→${mm(c.width)}`;
+}
+
+/** The piece's role, and whether it reaches into (or lies in) a doorway. */
+function pieceText(plan: Plan, c: CutItem): string {
+  const notch = c.notched ? " · notched" : "";
+  if (c.opening === undefined) return roleLabel(c) + notch;
+  if (rowLabel(plan, c).startsWith("door"))
+    return (c.role === "free" ? "doorway strip" : `${roleLabel(c)} · doorway`) + notch;
+  return `${roleLabel(c)}${notch} · into door ${c.opening + 1}`;
 }
 
 export function CutListTable({ plan }: { plan: Plan }) {
   const fulls = plan.cutList.filter((c) => c.role === "full").length;
   const cuts = plan.cutList.length - fulls;
   const angled = plan.cutList.some((c) => c.lengthShort !== undefined);
-  const tapered = plan.cutList.some((c) => c.widthNarrow !== undefined);
+  const tapered = plan.cutList.some((c) => c.widthNarrow !== undefined && !c.notched);
+  const notched = plan.cutList.some((c) => c.notched);
+  const doors = plan.cutList.some((c) => c.opening !== undefined);
 
   return (
     <div className="flex flex-col gap-2">
@@ -47,6 +59,12 @@ export function CutListTable({ plan }: { plan: Plan }) {
         most one of each — the offcut from a row&rsquo;s end starts another row.
         {angled ? " Length a / b: the end is cut at an angle — long edge / short edge." : ""}
         {tapered ? " Width a→b: a taper rip, start end → far end (laying direction)." : ""}
+        {doors
+          ? " Door rows are strips laid in a doorway, clicked onto the row beside it and fitted last."
+          : ""}
+        {notched
+          ? " Notched: L-shaped where it enters a doorway — length along each edge, and the tab's width."
+          : ""}
       </p>
       <div className="max-h-72 overflow-auto rounded-md border border-slate-200">
         <table className="w-full text-xs">
@@ -65,9 +83,9 @@ export function CutListTable({ plan }: { plan: Plan }) {
               const partners = boardPartners(plan, c);
               return (
                 <tr key={c.pieceId} className="border-t border-slate-100">
-                  <td className="px-2 py-1 text-left tabular-nums">{c.rowIndex + 1}</td>
+                  <td className="px-2 py-1 text-left tabular-nums">{rowLabel(plan, c)}</td>
                   <td className="px-2 py-1 text-left tabular-nums">{c.indexInRow + 1}</td>
-                  <td className="px-2 py-1 text-left">{roleLabel(c)}</td>
+                  <td className="px-2 py-1 text-left">{pieceText(plan, c)}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{lengthText(c)}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{widthText(c)}</td>
                   <td className="px-2 py-1 text-left">

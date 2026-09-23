@@ -8,7 +8,7 @@ test("CSV lists every piece with its role, board and both dimensions of an angle
   const plan = buildPlanForAxis(inputs, "X");
   const [header, ...lines] = cutListToCsv(plan).split("\n");
   expect(header).toBe(
-    "row,piece,type,role,length_mm,length_short_edge_mm,width_mm,width_narrow_end_mm,narrow_end,board,board_shared_with,offcut_remainder_mm",
+    "row,piece,type,role,length_mm,length_short_edge_mm,width_mm,width_narrow_end_mm,narrow_end,board,board_shared_with,offcut_remainder_mm,door,notched",
   );
   expect(lines.length).toBe(plan.cutList.length);
   const cells = lines.map((l) => l.split(","));

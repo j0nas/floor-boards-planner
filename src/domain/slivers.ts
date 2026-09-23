@@ -20,13 +20,17 @@ import { EPS, type Mm } from "./units.ts";
  * full-size but whose real area is a sliver — the bbox dimensions alone miss them.
  */
 export function isUndersized(
-  p: Pick<Piece, "faceLength" | "faceLengthShort" | "faceWidth" | "faceWidthNarrow" | "poly">,
+  p: Pick<
+    Piece,
+    "faceLength" | "faceLengthShort" | "faceWidth" | "faceWidthNarrow" | "poly" | "notched"
+  >,
   minPiece: Mm,
   minRowWidth: Mm,
 ): boolean {
-  // Judge an angled end by its shorter edge and a taper by its narrow end.
+  // Judge an angled end by its shorter edge and a taper by its narrow end — but
+  // a notched piece's narrow end is a tab into a doorway, not a sliver.
   const length = Math.min(p.faceLength, p.faceLengthShort ?? p.faceLength);
-  const width = Math.min(p.faceWidth, p.faceWidthNarrow ?? p.faceWidth);
+  const width = p.notched ? p.faceWidth : Math.min(p.faceWidth, p.faceWidthNarrow ?? p.faceWidth);
   if (length < minPiece - EPS || width < minRowWidth - EPS) return true;
   if (p.poly.length >= 3) {
     const area = Math.abs(ringsArea([p.poly]));

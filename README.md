@@ -50,6 +50,7 @@ orientations and chooses the better one (unless forced).
 | `compare.ts`    | Lexicographic orientation choice: valid → stagger → balance → waste                                                                                   |
 | `plan.ts`       | Orchestrator: geometry → balance → stagger → pieces clipped to the floor → cut → material → score                                                     |
 | `polyLayout.ts` | Custom shapes (and quads too slanted for one taper row): rows clipped to the outline, same stagger/cutting rules                                      |
+| `openings.ts`   | Door openings: the floor runs through the wall to a threshold; rows passing a door reach in (notched at a jamb), or a doorway strip is added          |
 | `verify.ts`     | Independent self-check of a finished plan (tiling, sizes, cuttable cut list, stagger) — shown in the UI and fuzzed in tests                           |
 
 ### Key correctness decisions
@@ -69,6 +70,12 @@ orientations and chooses the better one (unless forced).
   that joins the next board and a cut end piece the opposite end, so the offcut
   from a row's end starts another row — never a second start. Reuse is
   length-only by design (cut to length first, then rip).
+- **Door openings are floored to the threshold.** A door in a wall along the
+  rows gets a strip of its own, clicked onto the row beside it (warned if that
+  row's edge was ripped off); a door at the row ends makes the rows passing it
+  reach in, notched at a jamb. Only rows passing the clear opening reach in —
+  the strip under an undercut frame is covered where a doorway piece reaches it,
+  never by a fragile tab. Adding a door leaves the room's own rows unchanged.
 - **Stagger is validated on the real seam positions** (cumulative piece sums),
   not on the generating offsets.
 - **Near-multiple trap:** when the run length is close to an integer multiple of

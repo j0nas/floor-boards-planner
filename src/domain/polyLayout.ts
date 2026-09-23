@@ -14,8 +14,18 @@
  *     corners) so they are highlighted rather than silently mislabelled.
  */
 import { balanceRows } from "./balance.ts";
-import { type DemandPiece, assignCuts } from "./cutting.ts";
-import { type Ring, clipRings, insetRoom, ringsArea } from "./poly.ts";
+import { assignCuts, demandFromPieces } from "./cutting.ts";
+import { openingOnly, passes, withOpenings } from "./openings.ts";
+import {
+  type Ring,
+  bboxOf,
+  clipRings,
+  insetRoom,
+  isConvexRing,
+  measurePiece,
+  ringsArea,
+  unionRings,
+} from "./poly.ts";
 import { roomOutline } from "./room.ts";
 import { markUndersized, undersizedDiagnostic } from "./slivers.ts";
 import { pickStaggerIndex, planRowPieces } from "./stagger.ts";
@@ -30,32 +40,9 @@ import type {
   PieceRole,
   Plan,
   PlanScore,
-  Point,
   StaggerInfo,
 } from "./types.ts";
-import { EPS, type Mm, approxEq, differsOnTape, gte, makeRng } from "./units.ts";
-
-interface Box {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-}
-
-function bboxOf(rings: readonly Ring[]): Box {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const r of rings)
-    for (const p of r) {
-      if (p.x < minX) minX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y > maxY) maxY = p.y;
-    }
-  return { minX, minY, maxX, maxY };
-}
+import { EPS, type Mm, approxEq, gte, makeRng } from "./units.ts";
 
 /** Axis-aligned board rectangle (run along X or Y) of the given run length × width. */
 function boardRect(
@@ -88,64 +75,28 @@ function runRange(ring: Ring, runIsX: boolean): { min: number; max: number } {
 }
 
 /**
- * Extent of a ring along one axis where it crosses a line: with `fixCross` the
- * line is cross = `at` and the run extent is returned, otherwise the line is
- * run = `at` and the cross extent is returned (0 when the line misses).
+ * Roles for one row's pieces, read from which of their ends butt against
+ * another piece of the row (clipping around a notch or doorway can leave a
+ * segment's piece at the end of the row, so position alone can't tell).
+ * A piece spanning a whole board is "full" wherever it sits.
  */
-function chordAt(ring: Ring, runIsX: boolean, fixCross: boolean, at: number): number {
-  const fixed = (p: Point) => (runIsX ? p.y : p.x);
-  const other = (p: Point) => (runIsX ? p.x : p.y);
-  const get = fixCross ? fixed : other;
-  const measure = fixCross ? other : fixed;
-  let lo = Number.POSITIVE_INFINITY;
-  let hi = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < ring.length; i++) {
-    const a = ring[i]!;
-    const b = ring[(i + 1) % ring.length]!;
-    const fa = get(a) - at;
-    const fb = get(b) - at;
-    if (fa > 0 === fb > 0 && fa !== 0 && fb !== 0) continue;
-    if (fa === fb) {
-      lo = Math.min(lo, measure(a), measure(b));
-      hi = Math.max(hi, measure(a), measure(b));
-      continue;
-    }
-    const m = measure(a) + (fa / (fa - fb)) * (measure(b) - measure(a));
-    lo = Math.min(lo, m);
-    hi = Math.max(hi, m);
-  }
-  return hi > lo ? hi - lo : 0;
-}
-
-/**
- * Cut dimensions of a clipped piece, the way they are marked on a board: the
- * length along each long edge (they differ where a wall cuts the end at an
- * angle) and the width at each end (they differ where a wall tapers it).
- */
-function measurePiece(ring: Ring, runIsX: boolean) {
-  const b = bboxOf([ring]);
-  const [uMin, uMax, vMin, vMax] = runIsX
-    ? [b.minX, b.maxX, b.minY, b.maxY]
-    : [b.minY, b.maxY, b.minX, b.maxX];
-  const du = Math.min(0.05, (uMax - uMin) / 4);
-  const dv = Math.min(0.05, (vMax - vMin) / 4);
-  const lenA = chordAt(ring, runIsX, true, vMin + dv);
-  const lenB = chordAt(ring, runIsX, true, vMax - dv);
-  const wStart = chordAt(ring, runIsX, false, uMin + du);
-  const wEnd = chordAt(ring, runIsX, false, uMax - du);
-  const faceLength = uMax - uMin;
-  const faceWidth = vMax - vMin;
-  const shortLen = Math.min(lenA, lenB);
-  const narrow = Math.min(wStart, wEnd);
-  return {
-    lenA,
-    lenB,
-    faceLength,
-    faceLengthShort: differsOnTape(faceLength, shortLen) ? shortLen : undefined,
-    faceWidth,
-    faceWidthNarrow: differsOnTape(faceWidth, narrow) ? narrow : undefined,
-    narrowAtEnd: differsOnTape(faceWidth, narrow) ? wEnd < wStart : undefined,
+export function assignRoles(row: readonly Piece[], runIsX: boolean, bl: Mm): void {
+  const span = (p: Piece) => {
+    const b = bboxOf([p.poly]);
+    return runIsX
+      ? { u0: b.minX, u1: b.maxX, v0: b.minY, v1: b.maxY }
+      : { u0: b.minY, u1: b.maxY, v0: b.minX, v1: b.maxX };
   };
+  const s = row.map(span);
+  const touches = (a: (typeof s)[number], b: (typeof s)[number]) =>
+    Math.min(a.v1, b.v1) - Math.max(a.v0, b.v0) > 0.01;
+  row.forEach((p, i) => {
+    const me = s[i]!;
+    const low = s.some((o, j) => j !== i && Math.abs(o.u1 - me.u0) <= EPS && touches(o, me));
+    const high = s.some((o, j) => j !== i && Math.abs(o.u0 - me.u1) <= EPS && touches(o, me));
+    const whole = p.faceLength >= bl - EPS && (p.faceLengthShort ?? p.faceLength) >= bl - EPS;
+    p.role = whole ? "full" : low ? (high ? "full" : "end") : high ? "start" : "free";
+  });
 }
 
 /**
@@ -203,7 +154,7 @@ function rowTiling(
  * overall spread. `randomness > 0` instead picks a seeded-random start from the
  * still-valid band (`rand` is one PRNG draw), for a less symmetric pattern.
  */
-function chooseRowStart(
+export function chooseRowStart(
   spans: readonly { min: Mm; max: Mm }[],
   prev: readonly number[],
   prev2: readonly number[],
@@ -263,15 +214,30 @@ export function buildPolygonPlan(
   const { board, tunables: t } = inputs;
   const bl = board.length;
   const bw = board.width;
-  const region = (opts.region ?? insetRoom(roomOutline(inputs.room), uniformGapMm(inputs))).filter(
+  const main = (opts.region ?? insetRoom(roomOutline(inputs.room), uniformGapMm(inputs))).filter(
     (r) => Math.abs(ringsArea([r])) > 1,
   );
-  if (!region.length) return null;
+  if (!main.length) return null;
+  // Doorways join onto the floor. Rows are balanced over the room itself and
+  // carried on outward into any doorway beyond it; a doorway alongside the rows
+  // simply lengthens the spans of the rows passing it.
+  const region = withOpenings(main, inputs).filter((r) => Math.abs(ringsArea([r])) > 1);
+  const doors = openingOnly(main, inputs);
+  // A row reaches into a doorway only if it passes the clear opening — one that
+  // would only clip the part under the door frame keeps to the room.
+  const regionFor = (band: Ring): Ring[] => {
+    const reach = doors.filter((d) => passes(band, d));
+    if (reach.length === doors.length) return region;
+    return reach.length ? unionRings([...main, ...reach.map((d) => d.full)]) : main;
+  };
+  const openingOf = (ring: Ring): number | undefined =>
+    doors.find((d) => clipRings([ring], d.rings).some((r) => Math.abs(ringsArea([r])) > 1))?.index;
 
-  const bb = bboxOf(region);
+  const bb = bboxOf(main);
+  const all = bboxOf(region);
   const runIsX = runAxis === "X";
-  const runMin = runIsX ? bb.minX : bb.minY;
-  const runMax = runIsX ? bb.maxX : bb.maxY;
+  const runMin = runIsX ? all.minX : all.minY;
+  const runMax = runIsX ? all.maxX : all.maxY;
   const crossMin = runIsX ? bb.minY : bb.minX;
   const crossMax = runIsX ? bb.maxY : bb.maxX;
   const runSpan = runMax - runMin;
@@ -285,36 +251,35 @@ export function buildPolygonPlan(
   const rowWidths = inputs.flip === true ? [...balanced].reverse() : balanced;
 
   const pieces: Piece[] = [];
-  const demand: DemandPiece[] = [];
 
   // Stagger is chosen per row against the actual seam positions of the rows
   // already laid (not a fixed schedule keyed on row index): each row's start
   // piece is picked so its butt joints clear the previous one or two rows by at
   // least `minStagger` wherever the run geometry allows.
   const startLens: Mm[] = [];
-  let prevSeams: number[] = [];
-  let prevSeams2: number[] = [];
   let minObservedStagger = Number.POSITIVE_INFINITY;
   const randomness = t.staggerRandomness ?? 0;
   const rng = makeRng(t.staggerSeed ?? 1);
 
-  let crossStart = crossMin;
-  rowWidths.forEach((rw, k) => {
-    const w = rw.width;
-    const rowCross = crossStart;
-    crossStart += w;
+  /** Lay row `k` across [rowCross, rowCross + w]; returns its seams. */
+  const lay = (k: number, rowCross: Mm, w: Mm, prev: number[], prev2: number[]): number[] => {
+    const first = pieces.length;
     // Clip the full-run strip to the region first: a cavity wall (e.g. the inner
     // wall of an L) shortens this row, so we tile within its *actual* coverage
     // rather than the global bbox — that's what stops the notch cutting a sliver.
     const strip = boardRect(runMin, rowCross, runSpan, w, runIsX);
-    const coverage = clipRings([strip], region).filter((r) => Math.abs(ringsArea([r])) > 1);
+    const floor = regionFor(strip);
+    const coverage = clipRings([strip], floor).filter((r) => Math.abs(ringsArea([r])) > 1);
     const spans = coverage.map((cover) => runRange(cover, runIsX));
+    if (!spans.length) return [];
+    // Each span's pieces are clipped to that span's own coverage: where a notch
+    // splits the row lengthwise, two spans can share run positions.
 
     const rand = randomness > 0 ? rng() : 0;
     const choice = chooseRowStart(
       spans,
-      prevSeams,
-      prevSeams2,
+      prev,
+      prev2,
       bl,
       t.minPiece,
       t.minStagger,
@@ -324,8 +289,6 @@ export function buildPolygonPlan(
     startLens.push(choice.startLen);
     if (Number.isFinite(choice.gapPrev))
       minObservedStagger = Math.min(minObservedStagger, choice.gapPrev);
-    prevSeams2 = prevSeams;
-    prevSeams = choice.seams;
 
     let idx = 0;
     spans.forEach((span, s) => {
@@ -334,7 +297,9 @@ export function buildPolygonPlan(
       segs.forEach((segLen, j) => {
         const rect = boardRect(runPos, rowCross, segLen, w, runIsX);
         runPos += segLen;
-        const clipped = clipRings([rect], region).filter((r) => Math.abs(ringsArea([r])) > 1);
+        const clipped = clipRings([rect], [coverage[s]!]).filter(
+          (r) => Math.abs(ringsArea([r])) > 1,
+        );
         for (const ring of clipped) {
           const m = measurePiece(ring, runIsX);
           const whole = approxEq(m.lenA, bl) && approxEq(m.lenB, bl);
@@ -352,11 +317,11 @@ export function buildPolygonPlan(
                 : j === segs.length - 1
                   ? "end"
                   : "full";
-          const id = `r${k}-p${idx}`;
-          const piece: Piece = {
-            id,
+          const opening = openingOf(ring);
+          pieces.push({
+            id: `r${k}-p${idx}`,
             rowIndex: k,
-            indexInRow: idx,
+            indexInRow: idx++,
             poly: ring,
             faceLength: m.faceLength,
             faceLengthShort: m.faceLengthShort,
@@ -366,27 +331,40 @@ export function buildPolygonPlan(
             kind,
             role,
             isRipped: Math.min(m.faceWidth, m.faceWidthNarrow ?? m.faceWidth) < bw - EPS,
-          };
-          idx++;
-          pieces.push(piece);
-          // One cut-demand per piece: cut to its run length, at the row's width.
-          demand.push({
-            pieceId: id,
-            rowIndex: k,
-            indexInRow: piece.indexInRow,
-            length: piece.faceLength,
-            lengthShort: piece.faceLengthShort,
-            width: piece.faceWidth,
-            widthNarrow: piece.faceWidthNarrow,
-            narrowAtEnd: piece.narrowAtEnd,
-            kind,
-            role,
+            ...(opening === undefined ? {} : { opening, notched: !isConvexRing(ring) }),
           });
         }
       });
     });
+    assignRoles(pieces.slice(first), runIsX, bl);
+    return choice.seams;
+  };
+
+  // The room's rows, then rows carried on beyond either side into doorways.
+  const seams: number[][] = [];
+  let crossStart = crossMin;
+  rowWidths.forEach((rw, k) => {
+    seams.push(lay(k, crossStart, rw.width, seams[k - 1] ?? [], seams[k - 2] ?? []));
+    crossStart += rw.width;
   });
+  const allCrossMin = runIsX ? all.minY : all.minX;
+  const allCrossMax = runIsX ? all.maxY : all.maxX;
+  let prev = seams[seams.length - 1] ?? [];
+  let prev2 = seams[seams.length - 2] ?? [];
+  for (let k = seams.length, c = crossMax; c < allCrossMax - 1; k++, c += bw) {
+    const next = lay(k, c, bw, prev, prev2);
+    prev2 = prev;
+    prev = next;
+  }
+  prev = seams[0] ?? [];
+  prev2 = seams[1] ?? [];
+  for (let k = -1, c = crossMin; c > allCrossMin + 1; k--, c -= bw) {
+    const next = lay(k, c - bw, bw, prev, prev2);
+    prev2 = prev;
+    prev = next;
+  }
   if (!pieces.length) return null;
+  const demand = demandFromPieces(pieces);
 
   // Pack the cut lengths onto boards with offcut reuse → realistic board count.
   const cut = assignCuts(demand, bl, t.kerf);
@@ -401,7 +379,11 @@ export function buildPolygonPlan(
   // Highlight any leftover slivers (small fragments around concave corners).
   markUndersized(pieces, t.minPiece, t.minRowWidth);
 
-  const coveredAreaMm2 = region.reduce((s, r) => s + Math.abs(ringsArea([r])), 0);
+  // The floor plus whatever the doorway pieces cover (clear openings, and under
+  // the frames where they reach).
+  const coveredAreaMm2 = doors.length
+    ? pieces.reduce((s, p) => s + Math.abs(ringsArea([p.poly])), 0)
+    : region.reduce((s, r) => s + Math.abs(ringsArea([r])), 0);
   const material = computeMaterial({
     cut,
     board,

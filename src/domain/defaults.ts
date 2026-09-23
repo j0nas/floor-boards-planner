@@ -61,6 +61,7 @@ export const DEFAULT_INPUTS: Inputs = {
   boardsOnHand: 0,
   orientation: { mode: "auto" },
   flip: false,
+  openings: [],
   tunables: DEFAULT_TUNABLES,
 };
 

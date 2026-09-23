@@ -19,11 +19,20 @@ function csvCell(v: string | number): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** The other pieces cut from the same board, e.g. "r4 #1". */
+/** Row number — or the door, for a strip laid only in a doorway beyond the rows. */
+export function rowLabel(plan: Plan, c: CutItem): string {
+  const beyond = c.rowIndex < 0 || (plan.rows.length > 0 && c.rowIndex >= plan.rows.length);
+  return beyond && c.opening !== undefined ? `door ${c.opening + 1}` : String(c.rowIndex + 1);
+}
+
+/** The other pieces cut from the same board, e.g. "r4 #1" (or "door 1 #1"). */
 export function boardPartners(plan: Plan, c: CutItem): string {
   return plan.cutList
     .filter((o) => o.source === c.source && o.pieceId !== c.pieceId)
-    .map((o) => `r${o.rowIndex + 1} #${o.indexInRow + 1}`)
+    .map((o) => {
+      const row = rowLabel(plan, o);
+      return `${row.startsWith("door") ? row : `r${row}`} #${o.indexInRow + 1}`;
+    })
     .join(", ");
 }
 
@@ -43,12 +52,14 @@ export function cutListToCsv(plan: Plan): string {
     "board",
     "board_shared_with",
     "offcut_remainder_mm",
+    "door",
+    "notched",
   ];
   const round = (v: number | undefined) => (v === undefined ? "" : Math.round(v));
   const lines = plan.cutList.map((c) => {
     const r = reuse.get(c.pieceId);
     return [
-      c.rowIndex + 1,
+      rowLabel(plan, c),
       c.indexInRow + 1,
       c.kind,
       c.role,
@@ -60,6 +71,8 @@ export function cutListToCsv(plan: Plan): string {
       c.source,
       boardPartners(plan, c),
       r ? Math.round(r.remainder) : "",
+      c.opening === undefined ? "" : c.opening + 1,
+      c.notched ? "yes" : "",
     ]
       .map(csvCell)
       .join(",");

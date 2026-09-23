@@ -7,6 +7,7 @@ import {
   mm2ToM2,
 } from "../../domain/index.ts";
 import { NumberField } from "./NumberField.tsx";
+import { OpeningsEditor } from "./OpeningsEditor.tsx";
 
 /** Orientation label tracking the room's proportions: "length" = the longer side. */
 function axisLabel(room: Inputs["room"], axis: Axis): string {
@@ -128,6 +129,11 @@ export function InputsPanel({ inputs, setInputs, onReset, activePlan }: Props) {
             />
           </button>
         </div>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <SectionTitle>Door openings</SectionTitle>
+        <OpeningsEditor inputs={inputs} setInputs={setInputs} />
       </section>
 
       <section className="flex flex-col gap-2">

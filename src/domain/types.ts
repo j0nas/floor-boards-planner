@@ -52,6 +52,25 @@ export interface Pack {
 
 export type Orientation = { mode: "auto" } | { mode: "forced"; runAxis: Axis };
 
+/**
+ * A door opening the floor runs through, up to a threshold. The floor fills the
+ * clear width between the jambs from the room side to `depth` past the wall's
+ * room-side face (typically to a threshold profile under the closed door), and
+ * `tuck` further on each side where it slides under the undercut door frame.
+ */
+export interface Opening {
+  /** Wall index in the room outline: wall i runs from corner i to corner i+1 (a four-wall room: 0 near, 1 right, 2 far, 3 left). */
+  wall: number;
+  /** Distance along the wall from its start corner to the first jamb (mm). */
+  offset: Mm;
+  /** Clear width between the jambs (mm). */
+  width: Mm;
+  /** How far the floor runs past the wall's room-side face, to the threshold (mm). */
+  depth: Mm;
+  /** How far the floor slides under the undercut door frame on each side (mm). */
+  tuck: Mm;
+}
+
 /** Tunables with sensible defaults; all lengths in mm. */
 export interface Tunables {
   minRowWidth: Mm; // min first/last row width
@@ -90,6 +109,8 @@ export interface Inputs {
    * tapered row is pinned to the slanted wall.
    */
   flip?: boolean;
+  /** Door openings the floor runs into (absent in older saves). */
+  openings?: Opening[];
   tunables: Tunables;
 }
 
@@ -201,6 +222,10 @@ export interface Piece {
    * sliver, highlighted in the plan. Set by the domain from the tunables.
    */
   undersized?: boolean;
+  /** Index of the door opening this piece reaches into, if any. */
+  opening?: number;
+  /** True when the piece is L-shaped (notched where part of it enters a doorway). */
+  notched?: boolean;
   /** Source assignment from the cutting pass. */
   sourceBoardId?: string;
   fromOffcutId?: string;
@@ -227,6 +252,10 @@ export interface Row {
   seamPositions: readonly Mm[];
   /** Start-piece length (offset that drives the stagger). */
   startOffset: Mm;
+  /** How far the first piece reaches back into a doorway in the run-start wall. */
+  lead?: Mm;
+  /** How far the last piece reaches on into a doorway in the run-end wall. */
+  trail?: Mm;
 }
 
 export interface LayoutOption {
@@ -260,6 +289,10 @@ export interface CutItem {
   source: string;
   /** True when the board was already opened for an earlier piece (this uses its offcut). */
   reused: boolean;
+  /** Index of the door opening the piece reaches into, if any. */
+  opening?: number;
+  /** L-shaped: notched where part of it enters a doorway. */
+  notched?: boolean;
 }
 
 /** A piece cut from the offcut of a board that was opened for an earlier piece. */

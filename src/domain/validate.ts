@@ -8,6 +8,8 @@ import type {
   RectMeasurements,
 } from "./types.ts";
 import { MAX_FLOATING_SPAN_MM, recommendedMinGap } from "./defaults.ts";
+import { openingRing, wallGap, wallLength } from "./openings.ts";
+import { clipRings, ringsArea } from "./poly.ts";
 import { asRect, roomArea } from "./room.ts";
 import { type Mm, gt, lt } from "./units.ts";
 
@@ -229,6 +231,52 @@ export function validateInputs(i: Inputs): Diagnostic[] {
   // Expansion gap sizing & single-span warnings — quad rooms only for now; the
   // polygon path will size a uniform perimeter inset instead.
   if (rect) d.push(...quadGapDiagnostics(rect, gap));
+
+  // Door openings: on a real wall, inside its length, with a sensible size.
+  (i.openings ?? []).forEach((o, k) => {
+    const name = `Door opening ${k + 1}`;
+    const len = wallLength(i, o.wall);
+    const nums = [o.offset, o.width, o.depth, o.tuck];
+    if (!Number.isInteger(o.wall) || len <= 0)
+      d.push(err("opening.wall", `${name} is on wall ${o.wall + 1}, which doesn't exist.`));
+    else if (
+      !nums.every(Number.isFinite) ||
+      o.width <= 0 ||
+      o.depth < 0 ||
+      o.width + 2 * o.tuck <= 0
+    )
+      d.push(err("opening.size", `${name} needs a width above 0 and a depth of 0 or more.`));
+    else if (o.offset - o.tuck < -0.5 || o.offset + o.width + o.tuck > len + 0.5)
+      d.push(
+        err(
+          "opening.outside",
+          `${name} (${Math.round(o.offset)} + ${Math.round(o.width)} mm, plus ${Math.round(o.tuck)} mm under the frame each side) runs past the end of its ${Math.round(len)} mm wall.`,
+        ),
+      );
+    else {
+      // The floor keeps its gap from the walls either side, so a door opening
+      // can't start inside that gap (there'd be no floor there to reach it).
+      const n = room.outline.length;
+      const before = wallGap(i, (o.wall - 1 + n) % n);
+      const after = wallGap(i, (o.wall + 1) % n);
+      if (o.offset < before - 0.5 || o.offset + o.width > len - after + 0.5)
+        d.push(
+          err(
+            "opening.corner",
+            `${name} reaches into the expansion gap at the corner — the floor stops ${Math.round(Math.max(before, after))} mm from the side wall, so the opening must start at least that far from it.`,
+          ),
+        );
+    }
+  });
+
+  // Two openings can't share the same stretch of floor.
+  const doors = (i.openings ?? []).map((o) => openingRing(i, o));
+  doors.forEach((a, k) =>
+    doors.slice(k + 1).forEach((b, j) => {
+      if (a && b && clipRings([a], [b]).some((r) => Math.abs(ringsArea([r])) > 1))
+        d.push(err("opening.overlap", `Door openings ${k + 1} and ${k + j + 2} overlap.`));
+    }),
+  );
 
   // Pack.
   if (
