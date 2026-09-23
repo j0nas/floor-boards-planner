@@ -12,25 +12,21 @@ import { asRect, roomArea } from "./room.ts";
 import { type Mm, gt, lt } from "./units.ts";
 
 /**
- * Sources backing the expansion-gap guidance (Norway). The manufacturer baseline
- * is ~5 mm (Pergo: 3 mm in dry winter air, up to 8 mm in humid conditions);
- * 8–10 mm is the common retailer recommendation, and larger floors need
- * proportionally wider gaps.
+ * Sources backing the expansion-gap guidance (Norway). Pergo's installation
+ * guide sets 8 mm at normal indoor humidity (3 mm only when laying in very dry
+ * air, 10 mm when humid or under doors); 8–10 mm is also the retailer
+ * recommendation, and larger floors need proportionally wider gaps.
  */
 const GAP_SOURCES: readonly Citation[] = [
   {
     label:
-      "Pergo (manufacturer, NO): ~5 mm baseline clearance — 3 mm in dry winter air, 8 mm in humid conditions",
+      "Pergo ORIGINAL LAMINATE installation guide (NO): 8 mm at ≈50% RH — 3 mm only in very dry air, 10 mm when humid, ≥10 mm under doors",
     url: "https://www.megaflis.no/globalassets/productimages/5401013674656_mon.pdf",
   },
   {
     label:
       "OBS BYGG — Leggeanvisning laminatgulv: 8–10 mm to walls, max ~10 × 10 m without an expansion joint",
     url: "https://www.obsbygg.no/globalassets/productdocumentsfolder2/688621_3423128631586_.pdf",
-  },
-  {
-    label: "ByggeBolig (NO): ~4–5 mm works in practice and is covered by standard skirting",
-    url: "https://www.byggebolig.no/gulv/klaring-mellom-laminatgulv-og-vegg-ekspansjonsfuge",
   },
 ] as const;
 
@@ -126,7 +122,7 @@ function quadGapDiagnostics(rect: RectMeasurements, gap: ExpansionGap): Diagnost
     d.push(
       warn(
         "gap.tooSmall",
-        `Expansion gap${wallSuffix(g.walls)} is ${g.value} mm — below the ~${g.recMin} mm practical minimum (≈1 mm per metre of span; Pergo's baseline is ~5 mm, 8–10 mm is the usual Norwegian recommendation). Too little gap risks buckling.`,
+        `Expansion gap${wallSuffix(g.walls)} is ${g.value} mm — below the ~${g.recMin} mm minimum (Pergo: 8 mm at normal indoor humidity, 3 mm only when laying in very dry air; long spans need ≈1 mm per metre). Too little gap risks buckling.`,
         GAP_SOURCES,
       ),
     );

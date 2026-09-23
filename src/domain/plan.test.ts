@@ -350,3 +350,55 @@ describe("regression — a taper the last row can't absorb is clipped across row
     }
   });
 });
+
+describe("real room — the pantry laid in 2026-09 (Pergo Trondheim 2050 × 211)", () => {
+  // Measured on site (mm): door wall A–B 2887, B–C 1677, back wall C–D 2880,
+  // D–A 1675, both diagonals 3325. Entered with the door wall as "near", seen
+  // from the doorway (so B is near-left); boards along the long walls; saw kerf 3.
+  const inputs = clone(DEFAULT_INPUTS);
+  inputs.room = rectRoom({ widthNear: 2887, widthFar: 2880, lengthLeft: 1677, lengthRight: 1675 });
+  inputs.board = { length: 2050, width: 211, thickness: 9.5 };
+  inputs.orientation = { mode: "forced", runAxis: "X" };
+  inputs.tunables = { ...inputs.tunables, kerf: 3 };
+  const result = computePlans(inputs);
+  const plan = result.plans[result.chosenAxis]!;
+
+  test("is valid and passes the independent self-check", () => {
+    expect(result.chosenAxis).toBe("X");
+    expect(plan.valid).toBe(true);
+    assertInvariants(plan, inputs);
+  });
+
+  test("seven full rows from the door wall, one 180 → 178 mm rip at the back wall", () => {
+    expect(plan.rows.map((r) => Math.round(r.rowWidth))).toEqual([
+      211, 211, 211, 211, 211, 211, 211, 180,
+    ]);
+    expect(Math.round(plan.rows[7]!.rowWidthNarrow)).toBe(178);
+  });
+
+  test("the cut list that was handed to the installer", () => {
+    expect(plan.rows.map((r) => r.pieceLengths.map((l) => Math.round(l)))).toEqual([
+      [1773, 1094],
+      [1090, 1776],
+      [407, 2050, 409],
+      [1773, 1091],
+      [1090, 1774],
+      [407, 2050, 406],
+      [1773, 1088],
+      [1090, 1771],
+    ]);
+    expect(plan.material.boardsConsumed).toBe(14);
+    expect(plan.material.recommendedPurchasePacks).toBe(3);
+    // Four boards give an end piece and a start piece from opposite ends.
+    const byBoard = new Map<string, string[]>();
+    for (const c of plan.cutList)
+      byBoard.set(c.source, [...(byBoard.get(c.source) ?? []), `r${c.rowIndex + 1}-${c.role}`]);
+    const shared = [...byBoard.values()].filter((v) => v.length > 1).map((v) => v.join("+"));
+    expect(shared).toEqual([
+      "r1-end+r3-start",
+      "r2-start+r3-end",
+      "r4-end+r6-start",
+      "r5-start+r6-end",
+    ]);
+  });
+});

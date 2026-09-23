@@ -36,6 +36,11 @@ export function lte(a: number, b: number, tol: number = EPS): boolean {
   return a - b <= tol;
 }
 
+/** True when two lengths read differently on a tape (they round to different whole mm). */
+export function differsOnTape(a: number, b: number): boolean {
+  return Math.round(a) !== Math.round(b);
+}
+
 /** Clamp `v` into the inclusive range [`min`, `max`]. */
 export function clamp(v: number, min: number, max: number): number {
   if (v < min) return min;

@@ -48,10 +48,10 @@ describe("validateInputs", () => {
 });
 
 describe("expansion gap guidance (matches ~1 mm/metre industry rule)", () => {
-  test("recommendedMinGap is ~1 mm per metre, floored at the 5 mm manufacturer minimum", () => {
-    expect(recommendedMinGap(4000)).toBe(5); // normal room → 5 mm (Pergo baseline), not 8
-    expect(recommendedMinGap(3000)).toBe(5); // small room → 5 mm floor
-    expect(recommendedMinGap(7000)).toBe(7); // 7 m span → 7 mm
+  test("recommendedMinGap is Pergo's 8 mm, plus ~1 mm per metre on long spans", () => {
+    expect(recommendedMinGap(4000)).toBe(8); // normal room → Pergo's 8 mm at ≈50% RH
+    expect(recommendedMinGap(3000)).toBe(8); // small room → 8 mm floor
+    expect(recommendedMinGap(9000)).toBe(9); // 9 m span → 9 mm
     expect(recommendedMinGap(10000)).toBe(10); // 10 m → 10 mm
   });
 

@@ -33,7 +33,7 @@ import type {
   Point,
   StaggerInfo,
 } from "./types.ts";
-import { EPS, type Mm, approxEq, gte, makeRng } from "./units.ts";
+import { EPS, type Mm, approxEq, differsOnTape, gte, makeRng } from "./units.ts";
 
 interface Box {
   minX: number;
@@ -141,10 +141,10 @@ function measurePiece(ring: Ring, runIsX: boolean) {
     lenA,
     lenB,
     faceLength,
-    faceLengthShort: faceLength - shortLen > EPS ? shortLen : undefined,
+    faceLengthShort: differsOnTape(faceLength, shortLen) ? shortLen : undefined,
     faceWidth,
-    faceWidthNarrow: faceWidth - narrow > EPS ? narrow : undefined,
-    narrowAtEnd: faceWidth - narrow > EPS ? wEnd < wStart : undefined,
+    faceWidthNarrow: differsOnTape(faceWidth, narrow) ? narrow : undefined,
+    narrowAtEnd: differsOnTape(faceWidth, narrow) ? wEnd < wStart : undefined,
   };
 }
 

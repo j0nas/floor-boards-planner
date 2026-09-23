@@ -16,10 +16,12 @@ interface Props {
   room: RoomShape;
 }
 
-function stagger(p: Plan): number {
-  return Number.isFinite(p.stagger.minObservedStagger)
+/** Closest joints between adjacent rows, or "no joints" when every row is one piece. */
+function stagger(p: Plan): string {
+  const s = Number.isFinite(p.stagger.minObservedStagger)
     ? p.stagger.minObservedStagger
     : p.stagger.achievedStagger;
+  return Number.isFinite(s) ? `${Math.round(s)} mm` : "no joints";
 }
 
 function Cell({ children }: { children: React.ReactNode }) {
@@ -74,7 +76,7 @@ export function OrientationCompare({
                     </span>
                   ) : null}
                 </td>
-                <Cell>{plan ? `${Math.round(stagger(plan))} mm` : "—"}</Cell>
+                <Cell>{plan ? stagger(plan) : "—"}</Cell>
                 <Cell>{plan ? `${plan.material.consumedWastePct.toFixed(1)}%` : "—"}</Cell>
                 <Cell>{plan ? plan.material.boardsConsumed : "—"}</Cell>
                 <td className="px-2 py-1 text-right">

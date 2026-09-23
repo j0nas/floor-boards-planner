@@ -35,7 +35,10 @@ export const DEFAULT_TUNABLES: Tunables = {
   // is presented as a taper row and the flip toggle is locked: within 15 mm
   // (≈0.3° over 3 m) the border row may still be flipped to the other wall.
   squareTol: 15,
-  minGap: 5, // residual gap at the tight taper point — Pergo's ~5 mm baseline (NO)
+  // Hard floor for the gap along a slanted wall (below it the taper is invalid).
+  // Pergo allows as little as 3 mm when laying in very dry air, so 5 mm is a
+  // floor, not a target — the gap warning uses Pergo's normal 8 mm.
+  minGap: 5,
   safetyMarginPct: 0.1,
   staggerRandomness: 0, // default to the regular, deterministic pattern
   staggerSeed: 1, // any positive integer; "reshuffle" just increments it
@@ -66,8 +69,8 @@ export function uniformGap(value: number): ExpansionGap {
   return { near: value, far: value, left: value, right: value };
 }
 
-/** Perimeter expansion-gap range (mm), Norway: ~5 mm manufacturer minimum, 8–10 mm recommended. */
-export const GAP_RANGE = { min: 5, max: 10, large: 13 } as const;
+/** Perimeter expansion-gap range (mm), Norway: Pergo's 8 mm at normal humidity, 10 mm when humid / under doors. */
+export const GAP_RANGE = { min: 8, max: 10, large: 13 } as const;
 
 /**
  * Largest single floating span (mm) before an intermediate expansion joint
@@ -76,13 +79,13 @@ export const GAP_RANGE = { min: 5, max: 10, large: 13 } as const;
 export const MAX_FLOATING_SPAN_MM = 12000;
 
 /**
- * Practical minimum perimeter expansion gap (mm) for Norway. Manufacturers such
- * as Pergo specify a ~5 mm baseline clearance (down to 3 mm when laying in very
- * dry winter air, up to 8 mm in humid conditions); 8–10 mm is the common
- * Norwegian retailer recommendation, not a hard floor. So we treat ~5 mm plus
- * ~1 mm per metre of span as the minimum below which buckling becomes a real
- * risk: a normal room is fine at 5 mm, and only long spans push it higher.
+ * Recommended minimum perimeter expansion gap (mm) for Norway. Pergo's
+ * ORIGINAL LAMINATE installation guide (NO, 01.2023) sets the gap by the
+ * humidity when laying: 8 mm at normal indoor air (≈50% RH), 3 mm only when
+ * laying in very dry air (<30% RH, the boards are shrunk), 10 mm when humid
+ * (>70% RH) and at least 10 mm under doors. So 8 mm is the normal minimum, and
+ * long spans need ~1 mm per metre on top of that.
  */
 export function recommendedMinGap(spanMm: number): number {
-  return Math.max(5, Math.round(spanMm / 1000));
+  return Math.max(8, Math.round(spanMm / 1000));
 }

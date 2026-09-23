@@ -88,11 +88,17 @@ function orientationVerdict(
   word: (a: Axis) => string,
 ): Diagnostic {
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const joints = (p: Plan) => {
+    const s = Number.isFinite(p.stagger.minObservedStagger)
+      ? p.stagger.minObservedStagger
+      : p.stagger.achievedStagger;
+    return Number.isFinite(s) ? `stagger ${Math.round(s)} mm` : "no joints (one piece per row)";
+  };
   const fx = planX
-    ? `${cap(word("X"))}: stagger ${Math.round(planX.stagger.minObservedStagger === Infinity ? planX.stagger.achievedStagger : planX.stagger.minObservedStagger)} mm, waste ${pct(planX.material.consumedWastePct)}`
+    ? `${cap(word("X"))}: ${joints(planX)}, waste ${pct(planX.material.consumedWastePct)}`
     : `${cap(word("X"))}: not feasible`;
   const fy = planY
-    ? `${cap(word("Y"))}: stagger ${Math.round(planY.stagger.minObservedStagger === Infinity ? planY.stagger.achievedStagger : planY.stagger.minObservedStagger)} mm, waste ${pct(planY.material.consumedWastePct)}`
+    ? `${cap(word("Y"))}: ${joints(planY)}, waste ${pct(planY.material.consumedWastePct)}`
     : `${cap(word("Y"))}: not feasible`;
   return {
     severity: "info",

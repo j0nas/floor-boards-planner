@@ -23,7 +23,7 @@ import type {
 } from "./types.ts";
 import { resolveBoardsPerPack, validateInputs } from "./validate.ts";
 import { computeMaterial } from "./waste.ts";
-import { EPS, type Mm, approxEq, gte, lt } from "./units.ts";
+import { EPS, type Mm, approxEq, differsOnTape, gte, lt } from "./units.ts";
 
 // ───────────────────────── materialisation ─────────────────────────
 
@@ -88,9 +88,9 @@ function buildRows(frames: readonly RowFrame[], startOffsets: readonly Mm[], bl:
   });
 }
 
-/** Differing edge measurements are reported only when they differ by a markable amount. */
+/** A second edge measurement, reported only when it reads differently on a tape. */
 function ifDiffers(a: Mm, b: Mm): Mm | undefined {
-  return Math.abs(a - b) > EPS ? Math.min(a, b) : undefined;
+  return differsOnTape(a, b) ? Math.min(a, b) : undefined;
 }
 
 /**
