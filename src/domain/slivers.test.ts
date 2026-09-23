@@ -11,6 +11,7 @@ function piece(faceLength: number, faceWidth: number, id = "p"): Piece {
     faceLength,
     faceWidth,
     kind: "cut-length",
+    role: "free",
     isRipped: false,
   };
 }
@@ -63,6 +64,13 @@ describe("slivers", () => {
       ],
     };
     expect(isUndersized(wedge, 300, 50)).toBe(true);
+  });
+
+  test("an angled end is judged on its shorter edge, a taper on its narrow end", () => {
+    expect(isUndersized({ ...piece(320, 211), faceLengthShort: 290 }, 300, 50)).toBe(true);
+    expect(isUndersized({ ...piece(320, 211), faceLengthShort: 310 }, 300, 50)).toBe(false);
+    expect(isUndersized({ ...piece(1500, 120), faceWidthNarrow: 45 }, 300, 50)).toBe(true);
+    expect(isUndersized({ ...piece(1500, 120), faceWidthNarrow: 55 }, 300, 50)).toBe(false);
   });
 
   test("a full rectangle with the same bbox is not a sliver", () => {

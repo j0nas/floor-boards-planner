@@ -1,4 +1,5 @@
-import { type Inputs, type Plan, DEFAULT_INPUTS, toRoomShape } from "../domain/index.ts";
+import type { CutItem, Inputs, Plan } from "../domain/index.ts";
+import { restoreInputs } from "./state/usePlannerState.ts";
 
 /** Trigger a browser download of text content. */
 export function downloadText(filename: string, text: string, mime = "text/plain"): void {
@@ -18,29 +19,46 @@ function csvCell(v: string | number): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Cut list + offcut-reuse remainders as CSV. */
+/** The other pieces cut from the same board, e.g. "r4 #1". */
+export function boardPartners(plan: Plan, c: CutItem): string {
+  return plan.cutList
+    .filter((o) => o.source === c.source && o.pieceId !== c.pieceId)
+    .map((o) => `r${o.rowIndex + 1} #${o.indexInRow + 1}`)
+    .join(", ");
+}
+
+/** Cut list as CSV — one row per piece, in laying order. */
 export function cutListToCsv(plan: Plan): string {
   const reuse = new Map(plan.reuseMap.map((r) => [r.usedByPieceId, r]));
   const header = [
     "row",
     "piece",
     "type",
+    "role",
     "length_mm",
+    "length_short_edge_mm",
     "width_mm",
-    "reused",
-    "source",
+    "width_narrow_end_mm",
+    "narrow_end",
+    "board",
+    "board_shared_with",
     "offcut_remainder_mm",
   ];
+  const round = (v: number | undefined) => (v === undefined ? "" : Math.round(v));
   const lines = plan.cutList.map((c) => {
     const r = reuse.get(c.pieceId);
     return [
       c.rowIndex + 1,
       c.indexInRow + 1,
       c.kind,
+      c.role,
       Math.round(c.length),
+      round(c.lengthShort),
       Math.round(c.width),
-      c.reused ? "yes" : "no",
+      round(c.widthNarrow),
+      c.widthNarrow === undefined ? "" : c.narrowAtEnd ? "far" : "start",
       c.source,
+      boardPartners(plan, c),
       r ? Math.round(r.remainder) : "",
     ]
       .map(csvCell)
@@ -56,15 +74,11 @@ export function projectToJson(inputs: Inputs): string {
 
 /** Parse a project file; throws on a malformed/incompatible file. */
 export function projectFromJson(text: string): Inputs {
-  const parsed = JSON.parse(text) as { kind?: string; inputs?: Inputs };
+  const parsed = JSON.parse(text) as { kind?: string; inputs?: Partial<Inputs> };
   if (parsed.kind !== "floor-planner-project" || !parsed.inputs) {
     throw new Error("Not a valid floor-planner project file.");
   }
   // Back-compat: migrate a legacy four-measurement room into the polygon shape,
-  // and backfill tunables added since the file was saved (e.g. staggerRandomness).
-  return {
-    ...parsed.inputs,
-    tunables: { ...DEFAULT_INPUTS.tunables, ...parsed.inputs.tunables },
-    room: toRoomShape((parsed.inputs as { room?: unknown }).room, DEFAULT_INPUTS.room),
-  };
+  // and backfill anything added since the file was saved.
+  return restoreInputs(parsed.inputs);
 }

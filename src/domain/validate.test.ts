@@ -127,3 +127,14 @@ describe("feasibility guards", () => {
     expect(codes).not.toContain("minRow.gtHalfBoard");
   });
 });
+
+describe("validateInputs — tunables", () => {
+  test("a negative kerf or safety margin is a hard error", () => {
+    const i = structuredClone(DEFAULT_INPUTS);
+    i.tunables = { ...i.tunables, kerf: -3 };
+    expect(validateInputs(i).some((d) => d.code === "tunable.negative")).toBe(true);
+    i.tunables = { ...DEFAULT_INPUTS.tunables, safetyMarginPct: -0.1 };
+    expect(validateInputs(i).some((d) => d.code === "tunable.negative")).toBe(true);
+    expect(validateInputs(DEFAULT_INPUTS).some((d) => d.code === "tunable.negative")).toBe(false);
+  });
+});

@@ -19,6 +19,35 @@ export function planRowPieces(L: Mm, bl: Mm, startLen: Mm): Mm[] {
   return pieces;
 }
 
+/**
+ * One row's usable run: `length` along its longer long edge, `short` along the
+ * other. They differ when the run-end wall slants, so the row's end piece is cut
+ * at an angle and is `length - short` shorter on one edge.
+ */
+export interface RowRun {
+  length: Mm;
+  short: Mm;
+}
+
+/** A uniform run for `rows` rows (a square run-end wall). */
+export function uniformRuns(L: Mm, rows: number): RowRun[] {
+  return Array.from({ length: rows }, () => ({ length: L, short: L }));
+}
+
+/**
+ * Shortest piece edge in a row tiled from `startLen`: every piece's length, with
+ * the end piece measured along the row's shorter edge.
+ */
+export function rowMinPiece(run: RowRun, bl: Mm, startLen: Mm): Mm {
+  const pieces = planRowPieces(run.length, bl, startLen);
+  const lastIdx = pieces.length - 1;
+  let mn = Number.POSITIVE_INFINITY;
+  pieces.forEach((p, i) => {
+    mn = Math.min(mn, i === lastIdx ? p - (run.length - run.short) : p);
+  });
+  return mn;
+}
+
 /** Interior seam positions (cumulative sums, excluding the two wall ends). */
 export function seamsOf(pieceLengths: readonly Mm[], L: Mm): Mm[] {
   const seams: Mm[] = [];
@@ -127,9 +156,8 @@ function wrapStart(s: Mm, bl: Mm): Mm {
  * the polygon engine's per-row search so both layouts randomise the same way.
  */
 function randomizedRowOffsets(
-  L: Mm,
+  runs: readonly RowRun[],
   bl: Mm,
-  rowCount: number,
   minPiece: Mm,
   minStagger: Mm,
   randomness: number,
@@ -140,17 +168,17 @@ function randomizedRowOffsets(
   const offsets: Mm[] = [];
   let prev: Mm[] = [];
   let prev2: Mm[] = [];
-  for (let row = 0; row < rowCount; row++) {
+  for (const run of runs) {
+    const L = run.length;
     const starts: Mm[] = [bl];
     for (let i = 0; i <= steps; i++) starts.push(minPiece + ((bl - minPiece) * i) / steps);
     const scored = starts
       .map((s) => {
-        const pieces = planRowPieces(L, bl, s);
-        const seams = seamsOf(pieces, L);
+        const seams = seamsOf(planRowPieces(L, bl, s), L);
         return {
           startOffset: s,
           seams,
-          minPiece: Math.min(...pieces),
+          minPiece: rowMinPiece(run, bl, s),
           gapPrev: pairStagger(seams, prev),
           gapPrev2: pairStagger(seams, prev2),
         };
@@ -173,29 +201,31 @@ function randomizedRowOffsets(
 }
 
 /**
- * Plan the staggered seam pattern for `rowCount` rows of run length `L`.
+ * Plan the staggered seam pattern for rows with the given usable runs (one per
+ * row; they differ only when the run-end wall slants).
  *
  * Uses a P-phase offset schedule (target ≈ 1/3 board) and searches a global
- * phase shift so that no start/end piece drops below `minPiece`. Escalates the
- * phase count when a near-multiple run length traps the simple pattern.
+ * phase shift so that no start/end piece drops below `minPiece` in any row
+ * (an angled end piece is judged on its shorter edge). Escalates the phase
+ * count when a near-multiple run length traps the simple pattern.
  *
  * With `randomness > 0` the regular schedule is replaced by a seeded per-row
  * search that still clears `minStagger` everywhere, for a less repetitive look.
  */
 export function planStagger(
-  L: Mm,
+  runs: readonly RowRun[],
   bl: Mm,
-  rowCount: number,
   minPiece: Mm,
   minStagger: Mm,
   idealStagger: Mm,
   randomness = 0,
   seed = 1,
 ): StaggerPlan {
+  const rowCount = runs.length;
   // Short room: each row is a single piece, no stagger to plan.
-  if (L <= bl + EPS) {
+  if (runs.every((run) => run.length <= bl + EPS)) {
     return {
-      startOffsets: Array.from({ length: rowCount }, () => L),
+      startOffsets: runs.map((run) => run.length),
       info: {
         achievedStagger: Number.POSITIVE_INFINITY,
         minObservedStagger: Number.POSITIVE_INFINITY,
@@ -207,7 +237,8 @@ export function planStagger(
     };
   }
 
-  // Natural stagger a simple 2-piece reuse pattern would yield.
+  // Natural stagger a simple 2-piece reuse pattern would yield (on the mean run).
+  const L = runs.reduce((s, run) => s + run.length, 0) / Math.max(1, rowCount);
   const r = ((L % bl) + bl) % bl;
   const naturalStagger = Math.min(r, bl - r);
   const trap = naturalStagger < minStagger - EPS;
@@ -223,19 +254,23 @@ export function planStagger(
     return sa - sb;
   });
 
-  const evalPhases = Math.min(rowCount, 12); // distinct phase rows are enough
-
   function bestShiftFor(P: number): { shift: Mm; minPiece: Mm } {
     const step = bl / P;
+    // Every row matters (runs can differ), but identical (phase, run) rows
+    // repeat exactly — evaluate each distinct combination once.
+    const distinct = new Map<string, { phase: number; run: RowRun }>();
+    runs.forEach((run, i) =>
+      distinct.set(`${i % P}|${run.length}|${run.short}`, { phase: i % P, run }),
+    );
+    const rows = [...distinct.values()];
     const samples = Math.min(400, Math.max(40, Math.round(step)));
     let bestShift = 0;
-    let bestMin = -1;
+    let bestMin = -Infinity;
     for (let s = 0; s <= samples; s++) {
       const delta = (step * s) / samples;
       let mn = Number.POSITIVE_INFINITY;
-      for (let i = 0; i < Math.max(evalPhases, P); i++) {
-        const start = wrapStart(bl - (i % P) * step - delta, bl);
-        for (const p of planRowPieces(L, bl, start)) mn = Math.min(mn, p);
+      for (const { phase, run } of rows) {
+        mn = Math.min(mn, rowMinPiece(run, bl, wrapStart(bl - phase * step - delta, bl)));
       }
       if (mn > bestMin + EPS) {
         bestMin = mn;
@@ -272,11 +307,14 @@ export function planStagger(
   // still clears minStagger; 0 keeps the schedule byte-for-byte (legacy output).
   const startOffsets =
     randomness > 0
-      ? randomizedRowOffsets(L, bl, rowCount, minPiece, minStagger, randomness, seed)
+      ? randomizedRowOffsets(runs, bl, minPiece, minStagger, randomness, seed)
       : scheduled;
 
   // Validate stagger on actual seam positions.
-  const seamSets = startOffsets.map((s) => seamsOf(planRowPieces(L, bl, s), L));
+  const seamSets = startOffsets.map((s, i) => {
+    const Li = runs[i]!.length;
+    return seamsOf(planRowPieces(Li, bl, s), Li);
+  });
   let minObserved = Number.POSITIVE_INFINITY;
   for (let i = 0; i + 1 < seamSets.length; i++) {
     minObserved = Math.min(minObserved, pairStagger(seamSets[i]!, seamSets[i + 1]!));

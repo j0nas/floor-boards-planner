@@ -20,6 +20,21 @@ function fmt(n: number): string {
   return Math.round(n).toString();
 }
 
+/** "length×width", with both edges of an angled end and both ends of a taper (start→far). */
+function sizeLabel(p: Piece): string {
+  const len =
+    p.faceLengthShort === undefined
+      ? fmt(p.faceLength)
+      : `${fmt(p.faceLength)}/${fmt(p.faceLengthShort)}`;
+  const wid =
+    p.faceWidthNarrow === undefined
+      ? fmt(p.faceWidth)
+      : p.narrowAtEnd
+        ? `${fmt(p.faceWidth)}→${fmt(p.faceWidthNarrow)}`
+        : `${fmt(p.faceWidthNarrow)}→${fmt(p.faceWidth)}`;
+  return `${len}×${wid}`;
+}
+
 export function SvgPlan({ plan, pieces, room, proj }: Props) {
   const roomPts = polyToPoints(roomOutline(room), proj);
 
@@ -91,12 +106,10 @@ export function SvgPlan({ plan, pieces, room, proj }: Props) {
                 fill="#0f172a"
                 className="pointer-events-none select-none"
               >
-                {p.kind === "taper"
-                  ? `${fmt(p.faceLength)}×${fmt(p.faceWidth)}→${fmt(p.faceWidthNarrow ?? p.faceWidth)}`
-                  : `${fmt(p.faceLength)}×${fmt(p.faceWidth)}`}
+                {sizeLabel(p)}
               </text>
             ) : (
-              <title>{`${fmt(p.faceLength)} × ${fmt(p.faceWidth)} mm (${p.kind}${sliver ? " — below min" : ""})`}</title>
+              <title>{`${sizeLabel(p)} mm (${p.kind}${sliver ? " — below min" : ""})`}</title>
             )}
           </g>
         );

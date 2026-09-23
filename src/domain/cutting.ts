@@ -1,4 +1,4 @@
-import type { CutItem, PieceKind, ReuseEntry } from "./types.ts";
+import type { CutItem, PieceKind, PieceRole, ReuseEntry } from "./types.ts";
 import { EPS, type Mm } from "./units.ts";
 
 /** A piece that must be obtained, before a source board/offcut is assigned. */
@@ -6,16 +6,13 @@ export interface DemandPiece {
   pieceId: string;
   rowIndex: number;
   indexInRow: number;
-  length: Mm; // run-length to cut
+  length: Mm; // run-length to cut (the longer edge of an angled end)
+  lengthShort?: Mm;
   width: Mm; // cross width (for area/labelling)
+  widthNarrow?: Mm;
+  narrowAtEnd?: boolean;
   kind: PieceKind;
-}
-
-interface Offcut {
-  id: string;
-  length: Mm;
-  fromBoardId: string;
-  fromPieceId: string;
+  role: PieceRole;
 }
 
 export interface CutResult {
@@ -26,112 +23,123 @@ export interface CutResult {
   reuseMap: ReuseEntry[];
 }
 
+/** A board with the demand pieces cut from it (in no particular order yet). */
+interface Stock {
+  pieces: DemandPiece[];
+  /** Free length left in the middle of the board, between its end cuts. */
+  spare: Mm;
+}
+
+/** Laying order: row, then position in the row. */
+function layOrder(a: DemandPiece, b: DemandPiece): number {
+  return a.rowIndex - b.rowIndex || a.indexInRow - b.indexInRow;
+}
+
 /**
- * 1-D cutting-stock with best-fit offcut reuse and kerf.
+ * 1-D cutting-stock that respects click-joint ends, with kerf.
  *
- * Length accounting only: each piece needs `length` of a `bl`-long board.
- * Pieces are cut longest-first; a cut piece prefers the *smallest* offcut that
- * still fits (best-fit — which naturally pairs complementary lengths, e.g. a
- * 2/3 and a 1/3 board from one stick), otherwise a fresh board is opened and
- * its remainder enters the offcut pool. Width (rip) waste is accounted by area
- * in the material summary, not here.
+ * Length accounting only (the cut-to-length-first convention: every length
+ * offcut is still full width, so width never limits reuse). A cut START piece
+ * must keep the board end that joins the next board and a cut END piece the end
+ * that joins the previous one, so one board yields at most one start and one end
+ * piece: the classic "the offcut from a row's end starts another row". Pairs are
+ * chosen by a greedy maximum matching (the longest end piece takes the shortest
+ * start piece that still fits beside it), which minimises boards for the start
+ * and end pieces. FREE pieces (a whole row in one piece, both ends at walls) can
+ * come from any part of a board, so they fill leftover middles best-fit first.
+ * Width (rip) waste is accounted by area in the material summary, not here.
  */
-export function assignCuts(
-  demand: readonly DemandPiece[],
-  bl: Mm,
-  kerf: Mm,
-  minReusable: Mm,
-): CutResult {
-  const cutList: CutItem[] = [];
-  const reuseMap: ReuseEntry[] = [];
-  const offcuts: Offcut[] = [];
-  let boards = 0;
-  let fullBoards = 0;
-  let cutPieces = 0;
-  let offcutSeq = 0;
+export function assignCuts(demand: readonly DemandPiece[], bl: Mm, kerf: Mm): CutResult {
+  const stocks: Stock[] = [];
+  const open = (pieces: DemandPiece[], used: Mm): void => {
+    stocks.push({ pieces, spare: bl - used });
+  };
+
+  const isFull = (d: DemandPiece) => d.role === "full" || d.length >= bl - EPS;
+  const fulls = demand.filter(isFull);
+  const starts = demand.filter((d) => !isFull(d) && d.role === "start");
+  const ends = demand.filter((d) => !isFull(d) && d.role === "end");
+  const frees = demand.filter((d) => !isFull(d) && d.role === "free");
+
+  // Full boards — each consumes a whole board, no offcut.
+  for (const d of fulls) open([d], bl);
+
+  // Pair end pieces with start pieces: largest end first, with the smallest start
+  // that fits beside it on one board (an exchange argument shows this greedy
+  // finds a maximum matching). Ties resolve in laying order for determinism.
+  const desc = (a: DemandPiece, b: DemandPiece) => b.length - a.length || layOrder(a, b);
+  const endsDesc = [...ends].sort(desc);
+  const startsAsc = [...starts].sort((a, b) => a.length - b.length || layOrder(a, b));
+  let lo = 0; // index of the smallest unpaired start
+  const unpaired: DemandPiece[] = [];
+  for (const e of endsDesc) {
+    const s = startsAsc[lo];
+    if (s && e.length + kerf + s.length <= bl + EPS) {
+      lo++;
+      open([e, s], e.length + s.length + 2 * kerf);
+    } else unpaired.push(e);
+  }
+  unpaired.push(...startsAsc.slice(lo));
+  for (const d of unpaired.sort(desc)) open([d], d.length + kerf);
+
+  // Free pieces: best-fit into the spare length of already-opened boards (the
+  // smallest spare that fits), else a new board.
+  for (const f of [...frees].sort(desc)) {
+    let best: Stock | null = null;
+    for (const st of stocks) {
+      if (st.pieces.some(isFull)) continue;
+      if (st.spare >= f.length - EPS && (!best || st.spare < best.spare)) best = st;
+    }
+    if (best) {
+      best.pieces.push(f);
+      best.spare -= f.length + kerf;
+    } else open([f], f.length + kerf);
+  }
+
+  // Number boards in laying order (B1 is the first board you open while laying),
+  // and list each board's pieces in the order they are laid.
+  for (const st of stocks) st.pieces.sort(layOrder);
+  stocks.sort((a, b) => layOrder(a.pieces[0]!, b.pieces[0]!));
 
   const byId = new Map<string, CutItem>();
-  for (const d of demand) {
-    const item: CutItem = {
-      pieceId: d.pieceId,
-      rowIndex: d.rowIndex,
-      indexInRow: d.indexInRow,
-      length: d.length,
-      width: d.width,
-      kind: d.kind,
-      source: "",
-      reused: false,
-    };
-    byId.set(d.pieceId, item);
-    cutList.push(item);
-  }
-
-  // Full boards first — each consumes a whole board, no offcut.
-  const fulls = demand.filter((d) => d.length >= bl - EPS);
-  for (const d of fulls) {
-    boards++;
-    fullBoards++;
-    const item = byId.get(d.pieceId)!;
-    item.source = `B${boards}`;
-    item.reused = false;
-  }
-
-  // Cut pieces longest-first so big pieces seed offcuts that small pieces reuse.
-  const cuts = demand
-    .filter((d) => d.length < bl - EPS)
-    .slice()
-    .sort((a, b) => b.length - a.length || a.pieceId.localeCompare(b.pieceId));
-
-  for (const d of cuts) {
-    cutPieces++;
-    const item = byId.get(d.pieceId)!;
-
-    // best-fit: smallest offcut that still fits this length
-    let bestIdx = -1;
-    for (let i = 0; i < offcuts.length; i++) {
-      if (offcuts[i]!.length >= d.length - EPS) {
-        if (bestIdx === -1 || offcuts[i]!.length < offcuts[bestIdx]!.length) bestIdx = i;
-      }
-    }
-
-    if (bestIdx >= 0) {
-      const oc = offcuts[bestIdx]!;
-      offcuts.splice(bestIdx, 1);
-      const remainder = oc.length - d.length - kerf;
-      item.source = oc.id;
-      item.reused = true;
-      reuseMap.push({
-        offcutId: oc.id,
-        fromBoardId: oc.fromBoardId,
-        fromPieceId: oc.fromPieceId,
-        usedByPieceId: d.pieceId,
-        lengthUsed: d.length,
-        remainder: Math.max(0, remainder),
+  const reuseMap: ReuseEntry[] = [];
+  stocks.forEach((st, i) => {
+    const boardId = `B${i + 1}`;
+    let left = bl;
+    st.pieces.forEach((d, j) => {
+      left -= d.length + (j < st.pieces.length - 1 || left - d.length > EPS ? kerf : 0);
+      byId.set(d.pieceId, {
+        pieceId: d.pieceId,
+        rowIndex: d.rowIndex,
+        indexInRow: d.indexInRow,
+        length: d.length,
+        lengthShort: d.lengthShort,
+        width: d.width,
+        widthNarrow: d.widthNarrow,
+        narrowAtEnd: d.narrowAtEnd,
+        kind: d.kind,
+        role: isFull(d) ? "full" : d.role,
+        source: boardId,
+        reused: j > 0,
       });
-      if (remainder >= minReusable - EPS) {
-        offcuts.push({
-          id: `O${++offcutSeq}`,
-          length: remainder,
-          fromBoardId: oc.fromBoardId,
-          fromPieceId: d.pieceId,
-        });
-      }
-    } else {
-      boards++;
-      const boardId = `B${boards}`;
-      item.source = boardId;
-      item.reused = false;
-      const remainder = bl - d.length - kerf;
-      if (remainder >= minReusable - EPS) {
-        offcuts.push({
-          id: `O${++offcutSeq}`,
-          length: remainder,
+      if (j > 0)
+        reuseMap.push({
           fromBoardId: boardId,
-          fromPieceId: d.pieceId,
+          fromPieceId: st.pieces[0]!.pieceId,
+          usedByPieceId: d.pieceId,
+          lengthUsed: d.length,
+          remainder: Math.max(0, left),
         });
-      }
-    }
-  }
+    });
+  });
 
-  return { boardsConsumed: boards, fullBoards, cutPieces, cutList, reuseMap };
+  const cutList = demand.map((d) => byId.get(d.pieceId)!);
+  const fullBoards = cutList.filter((c) => c.role === "full").length;
+  return {
+    boardsConsumed: stocks.length,
+    fullBoards,
+    cutPieces: cutList.length - fullBoards,
+    cutList,
+    reuseMap,
+  };
 }

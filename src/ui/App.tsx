@@ -1,5 +1,4 @@
-import { useMemo, useRef } from "react";
-import { piecesForOption } from "../domain/index.ts";
+import { useRef } from "react";
 import { BoardDiagram } from "./components/BoardDiagram.tsx";
 import { CutListTable } from "./components/CutListTable.tsx";
 import { DiagnosticsBanner } from "./components/DiagnosticsBanner.tsx";
@@ -40,18 +39,23 @@ export function App() {
     setView,
     activePlan,
     activeOptionIndex,
+    selfCheck,
   } = usePlannerState();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const displayPieces = useMemo(() => {
-    if (!activePlan) return [];
-    const rows = activePlan.layoutOptions[activeOptionIndex]?.rows ?? activePlan.rows;
-    // Polygon plans carry no rows — their clipped pieces are authoritative.
-    if (!rows.length) return activePlan.pieces;
-    return piecesForOption(activePlan.geometry, rows, inputs.board.length);
-  }, [activePlan, activeOptionIndex, inputs.board.length]);
-
-  const allDiagnostics = [...result.diagnostics, ...(activePlan?.diagnostics ?? [])];
+  const allDiagnostics = [
+    ...result.diagnostics,
+    ...(activePlan?.diagnostics ?? []),
+    ...(selfCheck.length
+      ? [
+          {
+            severity: "error" as const,
+            code: "selfCheck.failed",
+            message: `Self-check failed — don't cut from this plan: ${selfCheck.slice(0, 3).join("; ")}${selfCheck.length > 3 ? ` (+${selfCheck.length - 3} more)` : ""}.`,
+          },
+        ]
+      : []),
+  ];
 
   const gapWarn = result.diagnostics.some(
     (d) => d.code === "gap.tooSmall" || d.code === "gap.negative",
@@ -157,7 +161,7 @@ export function App() {
                     inputs={inputs}
                     setInputs={setInputs}
                     plan={activePlan}
-                    pieces={displayPieces}
+                    pieces={activePlan.pieces}
                     gapWarn={gapWarn}
                   />
                   <PlanLegend />
@@ -181,7 +185,16 @@ export function App() {
               </div>
 
               <Card title="Cut list & offcut reuse">
-                <CutListTable plan={activePlan} />
+                <div className="flex flex-col gap-2">
+                  {selfCheck.length ? null : (
+                    <p className="rounded-md bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800">
+                      ✓ Self-check passed: the pieces exactly cover the floor inside the expansion
+                      gaps, every cut matches its piece, each board&rsquo;s pieces fit it, and no
+                      board is asked for two start or two end pieces.
+                    </p>
+                  )}
+                  <CutListTable plan={activePlan} />
+                </div>
               </Card>
             </>
           ) : (

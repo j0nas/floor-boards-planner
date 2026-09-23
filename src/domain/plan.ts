@@ -1,11 +1,12 @@
 import { balanceRows, type LayoutOptionDraft, type RowWidth } from "./balance.ts";
 import { chooseAxis } from "./compare.ts";
 import { type DemandPiece, assignCuts } from "./cutting.ts";
-import { computeGeometry, crossWidthAt, toRoom } from "./geometry.ts";
+import { computeGeometry, crossWidthAt, runLengthAt, toRoom } from "./geometry.ts";
+import { clipRings, ringsArea } from "./poly.ts";
 import { buildPolygonPlan } from "./polyLayout.ts";
 import { asRect, longAxis } from "./room.ts";
-import { markUndersized } from "./slivers.ts";
-import { planRowPieces, planStagger, seamsOf } from "./stagger.ts";
+import { markUndersized, undersizedDiagnostic } from "./slivers.ts";
+import { type RowRun, planRowPieces, planStagger, seamsOf } from "./stagger.ts";
 import { computeTaper } from "./taper.ts";
 import type {
   Axis,
@@ -14,10 +15,10 @@ import type {
   Inputs,
   LayoutOption,
   Piece,
+  PieceRole,
   Plan,
   PlanResult,
   PlanScore,
-  Point,
   Row,
 } from "./types.ts";
 import { resolveBoardsPerPack, validateInputs } from "./validate.ts";
@@ -26,98 +27,144 @@ import { EPS, type Mm, approxEq, gte, lt } from "./units.ts";
 
 // ───────────────────────── materialisation ─────────────────────────
 
-/** Build full Row objects (widths, flags, piece lengths, seams) for a draft. */
-function rowsFromDraft(
-  draft: LayoutOptionDraft,
-  geom: Geometry,
-  startOffsets: readonly Mm[],
-  bl: Mm,
-): Row[] {
-  const rowWidths = draft.rowWidths;
-  const lastIdx = rowWidths.length - 1;
-  return rowWidths.map((rw: RowWidth, i): Row => {
-    const startOffset = startOffsets[i] ?? geom.runLength;
-    const pieceLengths = planRowPieces(geom.runLength, bl, startOffset);
-    const isTaper = geom.crossVaries && i === lastIdx;
-    const outOfSquare = geom.crossWidthStart - geom.crossWidthEnd;
-    // Cross widths sum so far → this row's outer boundary at run-end.
-    const rowWidthEnd = isTaper ? rw.width - outOfSquare : rw.width;
+/** A row's cross position, width and usable run, before stagger. */
+interface RowFrame {
+  crossStart: Mm;
+  width: Mm;
+  narrow: Mm;
+  run: RowRun;
+  isEndRow: boolean;
+  isRipped: boolean;
+  isTaper: boolean;
+}
+
+/**
+ * Place a draft's rows across the usable floor and measure each row's own run:
+ * the run-end wall may slant, so each row (and each of its two long edges) can
+ * end at a different length. The row's outer edge stops at the far corner.
+ */
+function frameRows(draft: LayoutOptionDraft, geom: Geometry, bw: Mm): RowFrame[] {
+  const lastIdx = draft.rowWidths.length - 1;
+  const crossMin = Math.min(geom.crossWidthStart, geom.crossWidthEnd);
+  let acc = 0;
+  return draft.rowWidths.map((rw: RowWidth, i): RowFrame => {
+    const v0 = acc;
+    acc += rw.width;
+    const v1 = acc;
+    const edgeA = runLengthAt(geom, v0);
+    const edgeB = runLengthAt(geom, Math.min(v1, geom.crossWidthEnd));
+    const narrow = Math.min(v1, crossMin) - v0;
+    return {
+      crossStart: v0,
+      width: rw.width,
+      narrow,
+      run: { length: Math.max(edgeA, edgeB), short: Math.min(edgeA, edgeB) },
+      isEndRow: rw.isEndRow,
+      isRipped: rw.isRipped || lt(narrow, bw),
+      isTaper: geom.crossVaries && i === lastIdx,
+    };
+  });
+}
+
+/** Build full Row objects (frames + stagger → piece lengths and seams). */
+function buildRows(frames: readonly RowFrame[], startOffsets: readonly Mm[], bl: Mm): Row[] {
+  return frames.map((f, i): Row => {
+    const startOffset = startOffsets[i] ?? f.run.length;
+    const pieceLengths = planRowPieces(f.run.length, bl, startOffset);
     return {
       index: i,
-      rowWidth: rw.width,
-      rowWidthEnd,
-      isEndRow: rw.isEndRow,
-      isRipped: rw.isRipped || isTaper,
-      isTaper,
+      crossStart: f.crossStart,
+      rowWidth: f.width,
+      rowWidthNarrow: f.narrow,
+      runLength: f.run.length,
+      runLengthShort: f.run.short,
+      isEndRow: f.isEndRow,
+      isRipped: f.isRipped,
+      isTaper: f.isTaper,
       pieceLengths,
-      seamPositions: seamsOf(pieceLengths, geom.runLength),
+      seamPositions: seamsOf(pieceLengths, f.run.length),
       startOffset,
     };
   });
 }
 
-/** Cumulative cross start position (from the straight wall) for each row. */
-function crossStarts(rows: readonly Row[]): Mm[] {
-  const starts: Mm[] = [];
-  let acc = 0;
-  for (const r of rows) {
-    starts.push(acc);
-    acc += r.rowWidth;
-  }
-  return starts;
+/** Differing edge measurements are reported only when they differ by a markable amount. */
+function ifDiffers(a: Mm, b: Mm): Mm | undefined {
+  return Math.abs(a - b) > EPS ? Math.min(a, b) : undefined;
 }
 
-function pieceKind(row: Row, length: Mm, bl: Mm): Piece["kind"] {
-  if (row.isTaper) return "taper";
-  if (approxEq(length, bl)) return "full";
-  return "cut-length";
-}
-
-/** Build drawable pieces (polygons in room mm) for a set of rows. */
-export function piecesForOption(geom: Geometry, rows: readonly Row[], bl: Mm): Piece[] {
-  const starts = crossStarts(rows);
+/**
+ * Build the pieces for a set of rows. Each piece is its board rectangle clipped
+ * to the usable floor, so a slanted wall is followed exactly. Dimensions are
+ * measured the way they are marked on a board (cut to length first, then rip):
+ * the length along each long edge (they differ for an angled end cut) and the
+ * width at each end (they differ for a taper rip).
+ */
+function buildPieces(geom: Geometry, rows: readonly Row[], bl: Mm, bw: Mm): Piece[] {
   const pieces: Piece[] = [];
-  rows.forEach((row, i) => {
-    const crossStart = starts[i]!;
-    let runPos = 0;
+  for (const row of rows) {
+    const v0 = row.crossStart;
+    const v1 = v0 + row.rowWidth;
+    const vOuter = Math.min(v1, geom.crossWidthEnd); // outer edge stops at the far corner
+    const n = row.pieceLengths.length;
+    let u0 = 0;
     row.pieceLengths.forEach((len, j) => {
-      const runEnd = runPos + len;
-      let poly: Point[];
-      let faceWidthNarrow: number | undefined;
-      if (row.isTaper) {
-        // Outer cross edge follows the slanted wall (varies along the run).
-        const outerAtStart = crossWidthAt(geom, runPos / geom.runLength);
-        const outerAtEnd = crossWidthAt(geom, runEnd / geom.runLength);
-        poly = [
-          toRoom(geom, runPos, crossStart),
-          toRoom(geom, runEnd, crossStart),
-          toRoom(geom, runEnd, outerAtEnd),
-          toRoom(geom, runPos, outerAtStart),
-        ];
-        faceWidthNarrow = Math.min(outerAtStart, outerAtEnd) - crossStart;
-      } else {
-        const crossEnd = crossStart + row.rowWidth;
-        poly = [
-          toRoom(geom, runPos, crossStart),
-          toRoom(geom, runEnd, crossStart),
-          toRoom(geom, runEnd, crossEnd),
-          toRoom(geom, runPos, crossEnd),
-        ];
+      const u1 = u0 + len;
+      const lenA = Math.min(u1, runLengthAt(geom, v0)) - u0;
+      const lenB = Math.min(u1, runLengthAt(geom, vOuter)) - u0;
+      const wStart = Math.min(v1, crossWidthAt(geom, u0)) - v0;
+      const wEnd = Math.min(v1, crossWidthAt(geom, Math.min(u1, geom.runLengthEnd))) - v0;
+      const faceLength = Math.max(lenA, lenB);
+      const faceWidth = Math.max(wStart, wEnd);
+      const faceWidthNarrow = ifDiffers(wStart, wEnd);
+
+      const rect = [
+        toRoom(geom, u0, v0),
+        toRoom(geom, u1, v0),
+        toRoom(geom, u1, v1),
+        toRoom(geom, u0, v1),
+      ];
+      // Only pieces a slanted wall reaches need clipping; the rest are exact rects.
+      const inside =
+        u1 <= Math.min(runLengthAt(geom, v0), runLengthAt(geom, v1)) + 1e-6 &&
+        v1 <= Math.min(crossWidthAt(geom, u0), crossWidthAt(geom, u1)) + 1e-6;
+      const poly = inside
+        ? rect
+        : clipRings([rect], [geom.inner])
+            .filter((r) => Math.abs(ringsArea([r])) > 1)
+            .sort((a, b) => Math.abs(ringsArea([b])) - Math.abs(ringsArea([a])))[0];
+      if (!poly) {
+        u0 = u1;
+        return; // wholly outside the floor (only in an invalid layout)
       }
+
+      const whole = approxEq(lenA, bl) && approxEq(lenB, bl);
+      const role: PieceRole = whole
+        ? "full"
+        : n === 1
+          ? "free"
+          : j === 0
+            ? "start"
+            : j === n - 1
+              ? "end"
+              : "full";
       pieces.push({
-        id: `r${i}-p${j}`,
-        rowIndex: i,
+        id: `r${row.index}-p${j}`,
+        rowIndex: row.index,
         indexInRow: j,
         poly,
-        faceLength: len,
-        faceWidth: row.rowWidth,
+        faceLength,
+        faceLengthShort: ifDiffers(lenA, lenB),
+        faceWidth,
         faceWidthNarrow,
-        kind: pieceKind(row, len, bl),
-        isRipped: row.isRipped,
+        narrowAtEnd: faceWidthNarrow === undefined ? undefined : wEnd < wStart,
+        kind: row.isTaper ? "taper" : whole ? "full" : "cut-length",
+        role,
+        isRipped: lt(Math.min(wStart, wEnd), bw),
       });
-      runPos = runEnd;
+      u0 = u1;
     });
-  });
+  }
   return pieces;
 }
 
@@ -127,8 +174,12 @@ function demandFromPieces(pieces: readonly Piece[]): DemandPiece[] {
     rowIndex: p.rowIndex,
     indexInRow: p.indexInRow,
     length: p.faceLength,
+    lengthShort: p.faceLengthShort,
     width: p.faceWidth,
+    widthNarrow: p.faceWidthNarrow,
+    narrowAtEnd: p.narrowAtEnd,
     kind: p.kind,
+    role: p.role,
   }));
 }
 
@@ -143,7 +194,7 @@ function scorePlan(
   wastePct: number,
 ): PlanScore {
   const endRows = rows.filter((r) => r.isEndRow);
-  const minEnd = endRows.length ? Math.min(...endRows.map((r) => r.rowWidth)) : bw;
+  const minEnd = endRows.length ? Math.min(...endRows.map((r) => r.rowWidthNarrow)) : bw;
   // Any border at least half a board is "good-looking"; below that it is
   // penalised so balance only overrides waste when a border is genuinely thin.
   const half = bw / 2;
@@ -156,65 +207,76 @@ function scorePlan(
   };
 }
 
-export function buildPlanForAxis(inputs: Inputs, runAxis: Axis): Plan {
+/** Layout options (balanced / unbalanced border rows) for a quad-room orientation. */
+function layoutDrafts(inputs: Inputs, geom: Geometry): LayoutOptionDraft[] {
+  const t = inputs.tunables;
+  // Balance at the wide end; the last row absorbs the whole taper.
+  const wWide = Math.max(geom.crossWidthStart, geom.crossWidthEnd);
+  const taper = Math.abs(geom.crossWidthStart - geom.crossWidthEnd);
+  const balanced = balanceRows(wWide, inputs.board.width, t.minRowWidth, taper);
+  // Flip mirrors the cross-axis row order (cut row against the opposite wall).
+  // For a rectangle it is a pure mirror — same pieces, same waste. Suppressed
+  // when the cross width tapers: there the cut/taper row is pinned to the
+  // slanted wall and can't be freely swapped.
+  const flip = inputs.flip === true && !geom.crossVaries;
+  return flip ? balanced.map((d) => ({ ...d, rowWidths: [...d.rowWidths].reverse() })) : balanced;
+}
+
+/**
+ * Build the plan for one orientation of a quad room. `optionIndex` selects a
+ * layout option (balanced / unbalanced borders); by default the recommended one.
+ * Everything in the result — pieces, cut list, material — belongs to that option.
+ */
+export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: number): Plan {
   const { board, gap, tunables: t } = inputs;
   const rect = asRect(inputs.room);
   if (!rect) throw new Error("buildPlanForAxis requires a rectangular/quad room outline");
   const geom = computeGeometry(rect, gap, runAxis, t.squareTol);
+  if (!geom) throw new Error("buildPlanForAxis requires a convex quad with usable floor");
 
-  // Balance using the wide end so no row goes sub-min there.
-  const wWide = Math.max(geom.crossWidthStart, geom.crossWidthEnd);
-  const balanced = balanceRows(wWide, board.width, t.minRowWidth);
-  // Flip mirrors the cross-axis row order (cut row against the opposite wall).
-  // It is a pure mirror — same pieces, same waste — so it only moves seams, not
-  // material. Suppressed when the cross width tapers: there the cut/taper row is
-  // pinned to the slanted wall and can't be freely swapped.
-  const flip = inputs.flip === true && !geom.crossVaries;
-  const drafts = flip
-    ? balanced.map((d) => ({ ...d, rowWidths: [...d.rowWidths].reverse() }))
-    : balanced;
+  const drafts = layoutDrafts(inputs, geom);
+  const recommendedIdx = Math.max(
+    0,
+    drafts.findIndex((d) => d.recommended),
+  );
+  const chosenIdx =
+    optionIndex !== undefined && optionIndex >= 0 && optionIndex < drafts.length
+      ? optionIndex
+      : recommendedIdx;
+  const draft = drafts[chosenIdx]!;
 
-  // Stagger (identical row count across options → planned once).
-  const rowCount = drafts[0]?.rowWidths.length ?? 1;
+  const layoutOptions: LayoutOption[] = drafts.map((d) => ({
+    kind: d.kind,
+    recommended: d.recommended,
+    reason: d.reason,
+    valid: d.valid,
+  }));
+
+  // Rows, each with its own run (row ends differ where the run-end wall slants).
+  const frames = frameRows(draft, geom, board.width);
   const stagger = planStagger(
-    geom.runLength,
+    frames.map((f) => f.run),
     board.length,
-    rowCount,
     t.minPiece,
     t.minStagger,
     t.idealStagger,
     t.staggerRandomness ?? 0,
     t.staggerSeed ?? 1,
   );
+  const rows = buildRows(frames, stagger.startOffsets, board.length);
 
-  // Build rows + options.
-  const optionRows = drafts.map((d) => rowsFromDraft(d, geom, stagger.startOffsets, board.length));
-  const chosenIdx = Math.max(
-    0,
-    drafts.findIndex((d) => d.recommended),
-  );
-  const chosenRows = optionRows[chosenIdx]!;
-
-  const layoutOptions: LayoutOption[] = drafts.map((d, i) => ({
-    kind: d.kind,
-    recommended: d.recommended,
-    reason: d.reason,
-    rows: optionRows[i]!,
-  }));
-
-  const pieces = piecesForOption(geom, chosenRows, board.length);
+  const pieces = buildPieces(geom, rows, board.length, board.width);
   markUndersized(pieces, t.minPiece, t.minRowWidth);
-  const demand = demandFromPieces(pieces);
 
   // Taper.
   const slantWallGap = geom.crossAxis === "X" ? gap.right : gap.far;
-  const lastRow = chosenRows[chosenRows.length - 1]!;
+  const lastRow = rows[rows.length - 1]!;
   const taper = geom.crossVaries
     ? computeTaper(geom, lastRow.rowWidth, t.minRowWidth, t.minGap, slantWallGap)
     : undefined;
 
   // Cutting.
-  const cut = assignCuts(demand, board.length, t.kerf, t.minPiece);
+  const cut = assignCuts(demandFromPieces(pieces), board.length, t.kerf);
   // Attach sources back onto pieces.
   const sourceById = new Map(cut.cutList.map((c) => [c.pieceId, c]));
   for (const p of pieces) {
@@ -224,8 +286,8 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis): Plan {
     else p.sourceBoardId = c.source;
   }
 
-  // Material — covered area is the trapezoid (gap-excluded) usable floor.
-  const coveredAreaMm2 = ((geom.crossWidthStart + geom.crossWidthEnd) / 2) * geom.runLength;
+  // Material — covered area is the exact usable (gap-inset) floor.
+  const coveredAreaMm2 = Math.abs(ringsArea([geom.inner]));
   const material = computeMaterial({
     cut,
     board,
@@ -237,14 +299,16 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis): Plan {
 
   // Validity gate + diagnostics.
   const diagnostics: Diagnostic[] = [];
-  const minPieceLen = pieces.length ? Math.min(...pieces.map((p) => p.faceLength)) : board.length;
-  const draftValid = drafts[chosenIdx]?.valid ?? false;
+  const shortest = (p: Piece) => Math.min(p.faceLength, p.faceLengthShort ?? p.faceLength);
+  const minPieceLen = pieces.length ? Math.min(...pieces.map(shortest)) : board.length;
+  const draftValid = draft.valid;
   const staggerValid =
     !Number.isFinite(stagger.info.minObservedStagger) ||
     gte(stagger.info.minObservedStagger, t.minStagger);
   const pieceValid = gte(minPieceLen, t.minPiece);
+  const noSlivers = !pieces.some((p) => p.undersized);
   const taperValid = taper ? taper.ok : true;
-  const valid = draftValid && staggerValid && pieceValid && taperValid;
+  const valid = draftValid && staggerValid && pieceValid && noSlivers && taperValid;
 
   if (!draftValid)
     diagnostics.push({
@@ -286,11 +350,23 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis): Plan {
     diagnostics.push({
       severity: "info",
       code: "taper.ok",
-      message: `Out-of-square ${Math.round(taper.outOfSquareMm)} mm over ${(geom.runLength / 1000).toFixed(2)} m (≈${taper.approxAngleDeg.toFixed(2)}°): last row tapers ${Math.round(taper.taperWideMm)} → ${Math.round(taper.taperNarrowMm)} mm, gap held at ${Math.round(taper.tightGapMm)} mm.`,
+      message: `Out-of-square ${Math.round(taper.outOfSquareMm)} mm over ${(geom.runLengthEnd / 1000).toFixed(2)} m (≈${taper.approxAngleDeg.toFixed(2)}°): last row tapers ${Math.round(taper.taperWideMm)} → ${Math.round(taper.taperNarrowMm)} mm, gap held at ${Math.round(taper.tightGapMm)} mm.`,
     });
+  const rowSpread =
+    Math.max(...rows.map((r) => r.runLength)) - Math.min(...rows.map((r) => r.runLengthShort));
+  if (geom.runVaries && rowSpread >= 1)
+    diagnostics.push({
+      severity: "info",
+      code: "run.angled",
+      message: `The wall at the row ends is ${Math.round(Math.abs(geom.runLength - geom.runLengthEnd))} mm out of square, so rows end at different lengths (${Math.round(Math.min(...rows.map((r) => r.runLengthShort)))}–${Math.round(Math.max(...rows.map((r) => r.runLength)))} mm). Each row's end piece is sized for its own row — cut to the cut list, not to one length.`,
+    });
+  if (pieceValid && draftValid && taperValid && !noSlivers) {
+    const sliver = undersizedDiagnostic(pieces, t.minPiece, t.minRowWidth);
+    if (sliver) diagnostics.push(sliver);
+  }
 
   const score = scorePlan(
-    chosenRows,
+    rows,
     board.width,
     stagger.info.minObservedStagger,
     stagger.info.achievedStagger,
@@ -303,7 +379,7 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis): Plan {
     geometry: geom,
     layoutOptions,
     chosenOptionIndex: chosenIdx,
-    rows: chosenRows,
+    rows,
     pieces,
     stagger: stagger.info,
     taper,
@@ -321,8 +397,23 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis): Plan {
 function feasibleAxis(inputs: Inputs, axis: Axis): Plan | null {
   const rect = asRect(inputs.room);
   if (!rect) return buildPolygonPlan(inputs, axis); // multi-wall / non-canonical outline
-  const geom = computeGeometry(rect, inputs.gap, axis, inputs.tunables.squareTol);
-  if (lt(geom.runLength, inputs.tunables.minPiece) || lt(geom.crossWidthStart, EPS)) return null;
+  const t = inputs.tunables;
+  const geom = computeGeometry(rect, inputs.gap, axis, t.squareTol);
+  // A concave (or collapsed) quad isn't a rows-and-one-taper floor: clip it.
+  if (!geom) return buildPolygonPlan(inputs, axis);
+  const runMax = Math.max(geom.runLength, geom.runLengthEnd);
+  const crossMax = Math.max(geom.crossWidthStart, geom.crossWidthEnd);
+  if (lt(runMax, t.minPiece) || lt(crossMax, EPS)) return null;
+  // A slant no single tapered row can absorb (too steep, or no first-row width
+  // leaves the last row within a board and above the minimum at both ends) cuts
+  // across several rows: lay it with the clip-to-outline engine, on the exact
+  // per-wall floor.
+  const taper = Math.abs(geom.crossWidthStart - geom.crossWidthEnd);
+  if (taper > EPS && !layoutDrafts(inputs, geom).some((d) => d.valid))
+    return buildPolygonPlan(inputs, axis, {
+      region: [geom.inner],
+      note: `The ${axis === "Y" ? "right" : "far"} wall is ${Math.round(taper)} mm out of square — more than one tapered row can absorb here — so several rows are cut along it. Boards are clipped to the outline; verify the angled cuts on site.`,
+    });
   return buildPlanForAxis(inputs, axis);
 }
 
@@ -337,8 +428,7 @@ function generalQuadDiagnostic(inputs: Inputs): Diagnostic | null {
     return {
       severity: "warn",
       code: "room.generalQuad",
-      message:
-        "Both axes are out of square (general quadrilateral). The field is laid parallel to the straighter pair and one row is tapered; verify the second taper on site.",
+      message: `Both wall pairs are out of square (widths differ by ${Math.round(dx)} mm, lengths by ${Math.round(dy)} mm). The plan follows these measurements exactly — one wall tapers the last row, the other angles the row ends — so double-check them: a mis-measured wall looks exactly like this. The near-left corner is assumed square.`,
     };
   }
   return null;

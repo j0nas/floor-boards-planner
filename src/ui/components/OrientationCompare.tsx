@@ -113,7 +113,7 @@ export function OrientationCompare({
               <button
                 key={opt.kind}
                 type="button"
-                onClick={() => setView({ ...view, optionIndex: i })}
+                onClick={() => setView({ ...view, optionKind: opt.kind })}
                 className={`rounded border px-2 py-1 text-[11px] ${
                   i === activeOptionIndex
                     ? "border-sky-500 bg-sky-50 text-sky-700"

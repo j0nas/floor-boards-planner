@@ -7,10 +7,13 @@ function geom(crossStart: number, crossEnd: number, runLength = 4000): Geometry 
     runAxis: "Y",
     crossAxis: "X",
     runLength,
+    runLengthEnd: runLength,
     crossWidthStart: crossStart,
     crossWidthEnd: crossEnd,
     crossVaries: true,
+    runVaries: false,
     innerOrigin: { x: 10, y: 10 },
+    inner: [],
   };
 }
 

@@ -208,6 +208,18 @@ export function validateInputs(i: Inputs): Diagnostic[] {
     );
   }
 
+  // Lengths and fractions that only make sense as non-negative numbers.
+  for (const [name, v] of [
+    ["Saw kerf", tunables.kerf],
+    ["Minimum piece length", tunables.minPiece],
+    ["Minimum row width", tunables.minRowWidth],
+    ["Minimum stagger", tunables.minStagger],
+    ["Safety margin", tunables.safetyMarginPct],
+  ] as const) {
+    if (!Number.isFinite(v) || v < 0)
+      d.push(err("tunable.negative", `${name} must be a number ≥ 0 (got ${v}).`));
+  }
+
   // Stagger feasibility.
   if (gt(tunables.minStagger, board.length / 2)) {
     d.push(

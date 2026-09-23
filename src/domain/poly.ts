@@ -15,8 +15,10 @@ import {
   JoinType,
   type PathsD,
   areaPathsD,
+  differenceD,
   inflatePathsD,
   intersectD,
+  unionD,
 } from "clipper2-ts";
 import type { Mm, Mm2 } from "./units.ts";
 import type { Point } from "./types.ts";
@@ -52,6 +54,16 @@ export function insetRoom(outline: Ring, gap: Mm): Ring[] {
 /** Intersect two ring sets (e.g. clip a plank row to the usable floor). */
 export function clipRings(subject: readonly Ring[], clip: readonly Ring[]): Ring[] {
   return fromPaths(intersectD(toPaths(subject), toPaths(clip), FillRule.NonZero, PRECISION));
+}
+
+/** Union of a ring set (overlaps merged). */
+export function unionRings(rings: readonly Ring[]): Ring[] {
+  return fromPaths(unionD(toPaths(rings), [], FillRule.NonZero, PRECISION));
+}
+
+/** The part of `subject` outside `clip`. */
+export function differenceRings(subject: readonly Ring[], clip: readonly Ring[]): Ring[] {
+  return fromPaths(differenceD(toPaths(subject), toPaths(clip), FillRule.NonZero, PRECISION));
 }
 
 /** Total signed area of a ring set in mm² (holes subtract by winding). */

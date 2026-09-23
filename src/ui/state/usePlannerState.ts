@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type Axis,
   type Inputs,
+  type LayoutOption,
   type Plan,
   type PlanResult,
   DEFAULT_INPUTS,
+  buildPlanForAxis,
+  checkPlan,
   computePlans,
   toRoomShape,
 } from "../../domain/index.ts";
@@ -14,24 +17,32 @@ const STORAGE_KEY = "floor-planner:inputs:v1";
 export interface ViewSelection {
   /** Override the auto-chosen orientation for display. */
   axis?: Axis;
-  /** Override which layout option (balanced/unbalanced) is shown. */
-  optionIndex?: number;
+  /**
+   * Override which border layout is shown. Kept by kind, not index: the option
+   * list reorders as the room changes, and an index would silently flip to the
+   * other layout.
+   */
+  optionKind?: LayoutOption["kind"];
+}
+
+/** Rebuild a possibly older saved `Inputs`, backfilling fields added since. */
+export function restoreInputs(parsed: Partial<Inputs>): Inputs {
+  return {
+    ...DEFAULT_INPUTS,
+    ...parsed,
+    board: { ...DEFAULT_INPUTS.board, ...parsed.board },
+    gap: { ...DEFAULT_INPUTS.gap, ...parsed.gap },
+    pack: { ...DEFAULT_INPUTS.pack, ...parsed.pack },
+    tunables: { ...DEFAULT_INPUTS.tunables, ...parsed.tunables },
+    // Older saves store the room as four edge measurements.
+    room: toRoomShape((parsed as { room?: unknown }).room, DEFAULT_INPUTS.room),
+  };
 }
 
 function loadInputs(): Inputs {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Inputs;
-      // Back-compat: older saves store the room as four edge measurements, and
-      // predate newer tunables (e.g. staggerRandomness) — merge so they default.
-      return {
-        ...DEFAULT_INPUTS,
-        ...parsed,
-        tunables: { ...DEFAULT_INPUTS.tunables, ...parsed.tunables },
-        room: toRoomShape((parsed as { room?: unknown }).room, DEFAULT_INPUTS.room),
-      };
-    }
+    if (raw) return restoreInputs(JSON.parse(raw) as Partial<Inputs>);
   } catch {
     /* ignore malformed storage */
   }
@@ -46,10 +57,12 @@ export interface PlannerState {
   result: PlanResult;
   view: ViewSelection;
   setView: (v: ViewSelection) => void;
-  /** The plan currently shown (after any orientation override). */
+  /** The plan currently shown — orientation and border layout overrides applied. */
   activePlan: Plan | null;
   /** Index of the layout option currently shown. */
   activeOptionIndex: number;
+  /** Problems the independent self-check found in the shown plan (empty = sound). */
+  selfCheck: string[];
 }
 
 export function usePlannerState(): PlannerState {
@@ -81,8 +94,21 @@ export function usePlannerState(): PlannerState {
   const result = useMemo(() => computePlans(inputs), [inputs]);
 
   const activeAxis = view.axis ?? result.chosenAxis;
-  const activePlan = result.plans[activeAxis] ?? result.plans[result.chosenAxis];
-  const activeOptionIndex = view.optionIndex ?? activePlan?.chosenOptionIndex ?? 0;
+  const basePlan = result.plans[activeAxis] ?? result.plans[result.chosenAxis];
+
+  // A different border layout is a different plan — pieces, cut list and
+  // material all change — so build it in full rather than just redrawing rows.
+  const activePlan = useMemo(() => {
+    if (!basePlan || !view.optionKind || !basePlan.rows.length) return basePlan;
+    const idx = basePlan.layoutOptions.findIndex((o) => o.kind === view.optionKind);
+    if (idx < 0 || idx === basePlan.chosenOptionIndex) return basePlan;
+    return buildPlanForAxis(inputs, basePlan.runAxis, idx);
+  }, [basePlan, view.optionKind, inputs]);
+
+  const selfCheck = useMemo(
+    () => (activePlan ? checkPlan(inputs, activePlan) : []),
+    [activePlan, inputs],
+  );
 
   return {
     inputs,
@@ -93,6 +119,7 @@ export function usePlannerState(): PlannerState {
     view,
     setView,
     activePlan,
-    activeOptionIndex,
+    activeOptionIndex: activePlan?.chosenOptionIndex ?? 0,
+    selfCheck,
   };
 }

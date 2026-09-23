@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vite-plus/test";
-import { planRowPieces, planStagger, seamsOf } from "./stagger.ts";
+import { planRowPieces, planStagger, rowMinPiece, seamsOf, uniformRuns } from "./stagger.ts";
 import { makeRng } from "./units.ts";
 
 const BL = 2050;
@@ -35,7 +35,7 @@ describe("planRowPieces", () => {
 
 describe("planStagger — normal room", () => {
   const L = 4980; // ~5 m run
-  const plan = planStagger(L, BL, 14, MIN_PIECE, MIN_STAGGER, IDEAL);
+  const plan = planStagger(uniformRuns(L, 14), BL, MIN_PIECE, MIN_STAGGER, IDEAL);
 
   test("uses ≥ 3 phases with stagger near 1/3 board", () => {
     expect(plan.info.phases).toBeGreaterThanOrEqual(3);
@@ -61,7 +61,7 @@ describe("planStagger — normal room", () => {
 describe("planStagger — near-multiple trap", () => {
   test("exact multiple is detected and rescued by the multi-piece pattern", () => {
     const L = 6 * BL; // 12300 — seams would align with a 2-piece pattern
-    const plan = planStagger(L, BL, 14, MIN_PIECE, MIN_STAGGER, IDEAL);
+    const plan = planStagger(uniformRuns(L, 14), BL, MIN_PIECE, MIN_STAGGER, IDEAL);
     expect(plan.info.naturalStagger).toBeLessThan(MIN_STAGGER);
     expect(plan.info.nearMultipleTrap).toBe(true);
     expect(plan.info.usedMultiPiecePattern).toBe(true);
@@ -72,14 +72,14 @@ describe("planStagger — near-multiple trap", () => {
 
   test("a near (not exact) multiple is also trapped", () => {
     const L = 6 * BL + 150;
-    const plan = planStagger(L, BL, 12, MIN_PIECE, MIN_STAGGER, IDEAL);
+    const plan = planStagger(uniformRuns(L, 12), BL, MIN_PIECE, MIN_STAGGER, IDEAL);
     expect(plan.info.nearMultipleTrap).toBe(true);
     expect(Math.min(...allPieces(L, plan.startOffsets))).toBeGreaterThanOrEqual(MIN_PIECE - 0.5);
   });
 
   test("a run far from a multiple is not trapped", () => {
     const L = 6 * BL + 1000;
-    const plan = planStagger(L, BL, 12, MIN_PIECE, MIN_STAGGER, IDEAL);
+    const plan = planStagger(uniformRuns(L, 12), BL, MIN_PIECE, MIN_STAGGER, IDEAL);
     expect(plan.info.nearMultipleTrap).toBe(false);
   });
 });
@@ -87,7 +87,7 @@ describe("planStagger — near-multiple trap", () => {
 describe("planStagger — robustness over many run lengths", () => {
   test("never emits a sub-min piece for plausible rooms", () => {
     for (let L = 2200; L <= 9000; L += 37) {
-      const plan = planStagger(L, BL, 10, MIN_PIECE, MIN_STAGGER, IDEAL);
+      const plan = planStagger(uniformRuns(L, 10), BL, MIN_PIECE, MIN_STAGGER, IDEAL);
       const mn = Math.min(...allPieces(L, plan.startOffsets));
       expect(mn, `L=${L}`).toBeGreaterThanOrEqual(MIN_PIECE - 0.5);
     }
@@ -97,11 +97,11 @@ describe("planStagger — robustness over many run lengths", () => {
 describe("planStagger — randomised pattern", () => {
   const L = 4980;
   const ROWS = 14;
-  const base = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL); // randomness 0
-  const rnd = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 7);
+  const base = planStagger(uniformRuns(L, ROWS), BL, MIN_PIECE, MIN_STAGGER, IDEAL); // randomness 0
+  const rnd = planStagger(uniformRuns(L, ROWS), BL, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 7);
 
   test("randomness 0 leaves the regular schedule byte-for-byte unchanged", () => {
-    const explicitZero = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 0, 7);
+    const explicitZero = planStagger(uniformRuns(L, ROWS), BL, MIN_PIECE, MIN_STAGGER, IDEAL, 0, 7);
     expect(explicitZero.startOffsets).toEqual(base.startOffsets);
   });
 
@@ -117,16 +117,16 @@ describe("planStagger — randomised pattern", () => {
   });
 
   test("deterministic by seed; different seeds give different patterns", () => {
-    const a = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 7);
-    const b = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 7);
-    const c = planStagger(L, BL, ROWS, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 99);
+    const a = planStagger(uniformRuns(L, ROWS), BL, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 7);
+    const b = planStagger(uniformRuns(L, ROWS), BL, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 7);
+    const c = planStagger(uniformRuns(L, ROWS), BL, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 99);
     expect(a.startOffsets).toEqual(b.startOffsets);
     expect(c.startOffsets).not.toEqual(a.startOffsets);
   });
 
   test("full randomness never emits a sub-min piece, even near a board multiple", () => {
     for (let L2 = 2200; L2 <= 9000; L2 += 53) {
-      const p = planStagger(L2, BL, 10, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 5);
+      const p = planStagger(uniformRuns(L2, 10), BL, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 5);
       expect(Math.min(...allPieces(L2, p.startOffsets)), `L=${L2}`).toBeGreaterThanOrEqual(
         MIN_PIECE - 0.5,
       );
@@ -134,8 +134,42 @@ describe("planStagger — randomised pattern", () => {
   });
 
   test("randomness still clears the stagger floor on an exact board multiple", () => {
-    const p = planStagger(6 * BL, BL, 12, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 3);
+    const p = planStagger(uniformRuns(6 * BL, 12), BL, MIN_PIECE, MIN_STAGGER, IDEAL, 1, 3);
     expect(minAdjacentStagger(6 * BL, p.startOffsets)).toBeGreaterThanOrEqual(MIN_STAGGER - 0.5);
+  });
+});
+
+describe("planStagger — rows of different lengths (slanted run-end wall)", () => {
+  // The far wall slants 90 mm across 12 rows: each row ends 7.5 mm shorter.
+  const runs = Array.from({ length: 12 }, (_, i) => ({
+    length: 4980 - 7.5 * i,
+    short: 4980 - 7.5 * (i + 1),
+  }));
+  const plan = planStagger(runs, BL, MIN_PIECE, MIN_STAGGER, IDEAL);
+
+  test("each row is tiled to its own length", () => {
+    plan.startOffsets.forEach((s, i) => {
+      const pieces = planRowPieces(runs[i]!.length, BL, s);
+      expect(pieces.reduce((a, b) => a + b, 0)).toBeCloseTo(runs[i]!.length, 6);
+    });
+  });
+
+  test("an angled end piece is judged on its shorter edge", () => {
+    expect(rowMinPiece({ length: 2400, short: 2380 }, BL, 2050)).toBeCloseTo(330, 6);
+    plan.startOffsets.forEach((s, i) => {
+      expect(rowMinPiece(runs[i]!, BL, s), `row ${i}`).toBeGreaterThanOrEqual(MIN_PIECE - 0.5);
+    });
+  });
+
+  test("the reported stagger is measured on the real seams", () => {
+    const seams = plan.startOffsets.map((s, i) =>
+      seamsOf(planRowPieces(runs[i]!.length, BL, s), runs[i]!.length),
+    );
+    let mn = Number.POSITIVE_INFINITY;
+    for (let i = 0; i + 1 < seams.length; i++)
+      for (const a of seams[i]!) for (const b of seams[i + 1]!) mn = Math.min(mn, Math.abs(a - b));
+    expect(plan.info.minObservedStagger).toBeCloseTo(mn, 6);
+    expect(mn).toBeGreaterThanOrEqual(MIN_STAGGER - 0.5);
   });
 });
 

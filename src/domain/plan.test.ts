@@ -3,6 +3,7 @@ import { DEFAULT_INPUTS } from "./defaults.ts";
 import { buildPlanForAxis, computePlans } from "./plan.ts";
 import { asRect, rectRoom } from "./room.ts";
 import type { Inputs, Plan } from "./types.ts";
+import { checkPlan } from "./verify.ts";
 
 function clone(i: Inputs): Inputs {
   return structuredClone(i);
@@ -11,13 +12,16 @@ function clone(i: Inputs): Inputs {
 /** Assert the hard domain invariants on a plan. */
 function assertInvariants(plan: Plan, inputs: Inputs) {
   const t = inputs.tunables;
-  // No installed piece below the minimum.
+  // The independent physical check: tiling, sizes, cuttable cut list, stagger.
+  expect(checkPlan(inputs, plan)).toEqual([]);
+  // No installed piece below the minimum (an angled end judged on its short edge).
   for (const p of plan.pieces) {
-    expect(p.faceLength, `piece ${p.id}`).toBeGreaterThanOrEqual(t.minPiece - 0.5);
+    const shortest = Math.min(p.faceLength, p.faceLengthShort ?? p.faceLength);
+    expect(shortest, `piece ${p.id}`).toBeGreaterThanOrEqual(t.minPiece - 0.5);
   }
-  // First/last rows meet the minimum row width.
+  // First/last rows meet the minimum row width, at their narrow end too.
   for (const r of plan.rows.filter((r) => r.isEndRow)) {
-    expect(r.rowWidth).toBeGreaterThanOrEqual(t.minRowWidth - 0.5);
+    expect(r.rowWidthNarrow).toBeGreaterThanOrEqual(t.minRowWidth - 0.5);
   }
   // Adjacent-row stagger ≥ minimum (when there are interior seams).
   for (let i = 0; i + 1 < plan.rows.length; i++) {
@@ -80,8 +84,12 @@ describe("computePlans — out of square", () => {
   test("taper appears on the width-varying orientation and holds the gap", () => {
     const planY = buildPlanForAxis(inputs, "Y"); // run along length, cross = width varies
     expect(planY.taper).toBeDefined();
-    expect(planY.taper!.outOfSquareMm).toBeCloseTo(100, 0);
-    expect(planY.taper!.taperWideMm - planY.taper!.taperNarrowMm).toBeCloseTo(100, 0);
+    // 100 mm over the 3000 mm wall → 99.3 mm across the 2980 mm between the gaps.
+    expect(planY.taper!.outOfSquareMm).toBeCloseTo((100 * 2980) / 3000, 1);
+    expect(planY.taper!.taperWideMm - planY.taper!.taperNarrowMm).toBeCloseTo(
+      planY.taper!.outOfSquareMm,
+      6,
+    );
     // Last row is flagged as a taper row.
     expect(planY.rows[planY.rows.length - 1]!.isTaper).toBe(true);
   });
@@ -179,5 +187,166 @@ describe("computePlans — invalid inputs", () => {
     expect(r.diagnostics.some((d) => d.severity === "error")).toBe(true);
     expect(r.plans.X).toBeNull();
     expect(r.plans.Y).toBeNull();
+  });
+});
+
+// ───────────────────── regressions from the pre-cut correctness review ─────────────────────
+
+/** Gap between each row's boards and the (possibly slanted) run-end wall, per row. */
+function rowEndGaps(plan: Plan, wallX: (y: number) => number): number[] {
+  const gaps: number[] = [];
+  for (const row of plan.rows) {
+    const pieces = plan.pieces.filter((p) => p.rowIndex === row.index);
+    for (const y of [
+      Math.min(...pieces.flatMap((p) => p.poly.map((q) => q.y))),
+      Math.max(...pieces.flatMap((p) => p.poly.map((q) => q.y))),
+    ]) {
+      // Rightmost board edge at this y (the row's last piece).
+      const xs = pieces.flatMap((p) =>
+        p.poly.filter((q) => Math.abs(q.y - y) < 0.01).map((q) => q.x),
+      );
+      gaps.push(wallX(y) - Math.max(...xs));
+    }
+  }
+  return gaps;
+}
+
+describe("regression — a slanted wall at the row ends is followed row by row", () => {
+  // Right wall 40 mm out of square over 3 m; boards run along it (X).
+  const inputs = clone(DEFAULT_INPUTS);
+  inputs.room = rectRoom({ widthNear: 4000, widthFar: 4040, lengthLeft: 3000, lengthRight: 3000 });
+  const plan = buildPlanForAxis(inputs, "X");
+  const cos = 3000 / Math.hypot(40, 3000);
+  const wallX = (y: number) => 4000 + (40 * y) / 3000;
+
+  test("every row keeps the 10 mm gap (was −10 mm into the wall / 30 mm, averaged)", () => {
+    for (const g of rowEndGaps(plan, wallX)) expect(g * cos).toBeCloseTo(10, 1);
+  });
+
+  test("row lengths differ and the plan says so", () => {
+    const lengths = plan.rows.map((r) => r.runLength);
+    expect(Math.max(...lengths) - Math.min(...lengths)).toBeGreaterThan(30);
+    expect(plan.diagnostics.some((d) => d.code === "run.angled")).toBe(true);
+    assertInvariants(plan, inputs);
+  });
+
+  test("even within the square tolerance, the measured slant is honoured", () => {
+    const within = clone(DEFAULT_INPUTS);
+    within.room = rectRoom({
+      widthNear: 4000,
+      widthFar: 4014,
+      lengthLeft: 3000,
+      lengthRight: 3000,
+    });
+    const p = buildPlanForAxis(within, "X");
+    const c = 3000 / Math.hypot(14, 3000);
+    for (const g of rowEndGaps(p, (y) => 4000 + (14 * y) / 3000)) expect(g * c).toBeCloseTo(10, 1);
+  });
+});
+
+describe("regression — taper pieces carry their own widths", () => {
+  for (const [near, far] of [
+    [4000, 3960],
+    [3960, 4000],
+  ] as const) {
+    test(`right wall ${near} → ${far}: each taper piece's widths are its real ends`, () => {
+      const inputs = clone(DEFAULT_INPUTS);
+      inputs.room = rectRoom({
+        widthNear: near,
+        widthFar: far,
+        lengthLeft: 3000,
+        lengthRight: 3000,
+      });
+      const plan = buildPlanForAxis(inputs, "Y");
+      const last = plan.rows[plan.rows.length - 1]!;
+      expect(last.isTaper).toBe(true);
+      for (const p of plan.pieces.filter((q) => q.rowIndex === last.index)) {
+        const ys = p.poly.map((q) => q.y);
+        const widthAt = (y: number) => {
+          const xs = p.poly.filter((q) => Math.abs(q.y - y) < 0.01).map((q) => q.x);
+          return Math.max(...xs) - Math.min(...xs);
+        };
+        const start = widthAt(Math.min(...ys));
+        const end = widthAt(Math.max(...ys));
+        expect(p.faceWidth).toBeCloseTo(Math.max(start, end), 1);
+        expect(p.faceWidthNarrow).toBeCloseTo(Math.min(start, end), 1);
+        expect(p.narrowAtEnd).toBe(end < start);
+        const cut = plan.cutList.find((c) => c.pieceId === p.id)!;
+        expect(cut.width).toBeCloseTo(p.faceWidth, 6);
+        expect(cut.widthNarrow).toBeCloseTo(p.faceWidthNarrow!, 6);
+      }
+      assertInvariants(plan, inputs);
+    });
+  }
+});
+
+describe("regression — offcuts respect the click-joint ends", () => {
+  test("default room: a start piece never comes from another start piece's offcut", () => {
+    const r = computePlans(DEFAULT_INPUTS);
+    const plan = r.plans[r.chosenAxis]!;
+    const role = new Map(plan.cutList.map((c) => [c.pieceId, c.role]));
+    for (const e of plan.reuseMap) {
+      const from = role.get(e.fromPieceId);
+      const to = role.get(e.usedByPieceId);
+      if (from === "start") expect(to).not.toBe("start");
+      if (from === "end") expect(to).not.toBe("end");
+    }
+    assertInvariants(plan, DEFAULT_INPUTS);
+  });
+});
+
+describe("regression — every border option is a complete, consistent plan", () => {
+  test("choosing the other border option re-plans the cut list and material with it", () => {
+    const inputs = clone(DEFAULT_INPUTS);
+    const base = buildPlanForAxis(inputs, "Y");
+    expect(base.layoutOptions.length).toBe(2);
+    const otherIdx = 1 - base.chosenOptionIndex;
+    const other = buildPlanForAxis(inputs, "Y", otherIdx);
+    expect(other.chosenOptionIndex).toBe(otherIdx);
+    expect(other.rows.map((r) => Math.round(r.rowWidth))).not.toEqual(
+      base.rows.map((r) => Math.round(r.rowWidth)),
+    );
+    // The cut list belongs to the pieces actually drawn.
+    expect(new Set(other.cutList.map((c) => c.pieceId))).toEqual(
+      new Set(other.pieces.map((p) => p.id)),
+    );
+    assertInvariants(other, inputs);
+  });
+});
+
+describe("regression — a taper the last row can't absorb is clipped across rows", () => {
+  test("190 mm slant on 244 mm boards falls back to the clip engine on the exact floor", () => {
+    const inputs = clone(DEFAULT_INPUTS);
+    inputs.room = {
+      outline: [
+        { x: 0, y: 0 },
+        { x: 4773, y: 0 },
+        { x: 4750, y: 2472 },
+        { x: 0, y: 2281 },
+      ],
+    };
+    inputs.board = { length: 2050, width: 244, thickness: 8 };
+    const plan = computePlans(inputs).plans.X!;
+    expect(plan.rows.length).toBe(0); // clip engine
+    expect(plan.diagnostics.some((d) => d.code === "poly.uniformGap")).toBe(false);
+    expect(checkPlan(inputs, plan)).toEqual([]);
+  });
+
+  test("a balanced row never overshoots a board width when the leftover is a hair over one", () => {
+    const inputs = clone(DEFAULT_INPUTS);
+    inputs.room = rectRoom({
+      widthNear: 2407,
+      widthFar: 2407,
+      lengthLeft: 5089,
+      lengthRight: 4988,
+    });
+    inputs.board = { length: 1380, width: 211, thickness: 8 };
+    inputs.gap = { near: 12, far: 12, left: 12, right: 12 };
+    const plan = buildPlanForAxis(inputs, "X");
+    for (const option of plan.layoutOptions.keys()) {
+      const p = buildPlanForAxis(inputs, "X", option);
+      for (const piece of p.pieces) expect(piece.faceWidth).toBeLessThanOrEqual(211 + 0.5);
+      expect(checkPlan(inputs, p)).toEqual([]);
+    }
   });
 });

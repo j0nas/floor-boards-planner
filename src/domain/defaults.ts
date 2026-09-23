@@ -30,9 +30,10 @@ export const DEFAULT_TUNABLES: Tunables = {
   minStagger: 300,
   idealStagger: Math.round(2050 / 3), // ≈ 683 mm, ~1/3 board
   kerf: 0, // laminate is typically scored & snapped; expose for saw cuts
-  // Treat a wall pair as parallel within 15 mm (≈0.3° over 3 m). Real tape
-  // measurements of a square room vary by more than a few mm, so a tight
-  // tolerance spuriously tapers near-square rooms; 15 mm only flags a genuine slant.
+  // Geometry always follows the measurements exactly (every row gets its own
+  // length, the last row its real taper). This only decides when the last row
+  // is presented as a taper row and the flip toggle is locked: within 15 mm
+  // (≈0.3° over 3 m) the border row may still be flipped to the other wall.
   squareTol: 15,
   minGap: 5, // residual gap at the tight taper point — Pergo's ~5 mm baseline (NO)
   safetyMarginPct: 0.1,

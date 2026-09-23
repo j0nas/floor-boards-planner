@@ -59,7 +59,7 @@ export interface Tunables {
   minStagger: Mm; // min offset between adjacent-row end joints
   idealStagger: Mm; // preferred stagger (~1/3 board)
   kerf: Mm; // saw kerf removed per cut
-  squareTol: Mm; // axis treated as square if |near-far| <= this
+  squareTol: Mm; // last row shown as a taper (and flip locked) only if |near-far| > this
   minGap: Mm; // min residual expansion gap at the tight taper point
   safetyMarginPct: number; // extra material fraction (e.g. 0.1 = +10%)
   /**
@@ -119,20 +119,38 @@ export interface Point {
   y: Mm;
 }
 
-/** Resolved per-orientation geometry in room coordinates. */
+/**
+ * Resolved per-orientation geometry. The usable floor (the room inset by each
+ * wall's own gap) is a quad in local (run, cross) coordinates measured from the
+ * inner corner of the two straight walls:
+ *
+ *   (0, 0) — (runLength, 0) — (runLengthEnd, crossWidthEnd) — (0, crossWidthStart)
+ *
+ * The run-end wall joins (runLength, 0)→(runLengthEnd, crossWidthEnd), so row
+ * lengths vary across the rows when it slants; the cross-end wall joins
+ * (0, crossWidthStart)→(runLengthEnd, crossWidthEnd), so the last row tapers
+ * when it slants. A rectangle has runLength == runLengthEnd and
+ * crossWidthStart == crossWidthEnd.
+ */
 export interface Geometry {
   runAxis: Axis;
   crossAxis: Axis;
-  /** Usable run length (board-length direction), gap-subtracted; constant across rows. */
+  /** Usable run length (board-length direction) along the straight cross-start wall. */
   runLength: Mm;
-  /** Usable cross width at the run-start end (t=0). */
+  /** Usable run length along the far (cross-end) side, at the far corner. */
+  runLengthEnd: Mm;
+  /** Usable cross width along the straight run-start wall. */
   crossWidthStart: Mm;
-  /** Usable cross width at the run-end end (t=1). */
+  /** Usable cross width at the far (run-end) corner. */
   crossWidthEnd: Mm;
-  /** True when the cross width varies along the run (out-of-square → taper). */
+  /** True when the cross width varies by more than `squareTol` (the last row is a taper). */
   crossVaries: boolean;
-  /** Inner usable rectangle/quad corners in room mm (after gaps), for drawing. */
-  innerOrigin: Point; // run-start, cross-start corner
+  /** True when the run length varies across the rows (row ends are cut at an angle). */
+  runVaries: boolean;
+  /** Inner corner of the two straight walls, in room mm (local origin). */
+  innerOrigin: Point;
+  /** The usable floor polygon in room mm (CCW). */
+  inner: readonly Point[];
 }
 
 // ───────────────────────────── Pieces & rows ─────────────────────────────
@@ -144,19 +162,38 @@ export type PieceKind =
 // (Ripping to a narrower row is carried by `Piece.isRipped`, not a kind — a
 // ripped piece is still a "full" or "cut-length" board, just narrowed.)
 
+/**
+ * Where a piece sits in its row, which decides which factory end it must keep.
+ * Click boards join end-to-end through profiled short ends, so a row laid from
+ * the start wall needs its cut START piece to keep the end that joins the next
+ * board, and its cut END piece to keep the end that joins the previous one.
+ * One board can therefore give at most one start and one end piece — the classic
+ * "the offcut from a row's end starts another row".
+ */
+export type PieceRole =
+  | "full" // a whole-length board: both factory ends are used
+  | "start" // first piece of a row, cut: keeps the joining end facing into the row
+  | "end" // last piece of a row, cut: keeps the joining end facing back into the row
+  | "free"; // the only piece in its row: both ends meet walls, cut from anywhere
+
 export interface Piece {
   id: string;
   rowIndex: number;
   indexInRow: number;
-  /** Polygon in room mm (4 points; rect or trapezoid). */
+  /** Polygon in room mm (rect, or clipped where a wall slants). */
   poly: readonly Point[];
-  /** Nominal labelled run-length of the piece. */
+  /** Run length to cut — the longer of the piece's two long edges. */
   faceLength: Mm;
-  /** Cross width (for taper, the wider end). */
+  /** The shorter long edge, when the end is cut at an angle to follow a slanted wall. */
+  faceLengthShort?: Mm;
+  /** Cross width — the wider end. */
   faceWidth: Mm;
-  /** Taper only: cross width at the narrow end. */
+  /** Cross width at the narrow end, when ripped on a taper. */
   faceWidthNarrow?: Mm;
+  /** Taper only: true when the narrow end is the far end (in laying direction). */
+  narrowAtEnd?: boolean;
   kind: PieceKind;
+  role: PieceRole;
   isRipped: boolean;
   /**
    * True when the piece is below a recommended minimum (shorter than the min
@@ -171,16 +208,22 @@ export interface Piece {
 
 export interface Row {
   index: number;
-  /** Cross width at run-start. */
+  /** Cross position of the row's inner edge, from the straight cross-start wall. */
+  crossStart: Mm;
+  /** Cross width the row is cut to (the wider end, for a taper row). */
   rowWidth: Mm;
-  /** Cross width at run-end (differs from rowWidth only for a taper row). */
-  rowWidthEnd: Mm;
+  /** Cross width at the narrow end (equals rowWidth unless the row tapers). */
+  rowWidthNarrow: Mm;
+  /** Usable run length of this row — the longer of its two long edges. */
+  runLength: Mm;
+  /** The shorter long edge (differs from runLength when the run-end wall slants). */
+  runLengthShort: Mm;
   isEndRow: boolean; // first or last
   isRipped: boolean;
   isTaper: boolean;
-  /** Run-length of each piece in order. */
+  /** Run-length of each piece in order (the last one along the longer edge). */
   pieceLengths: readonly Mm[];
-  /** Interior seam positions along the run (cumulative, excludes 0 and runLength). */
+  /** Interior seam positions along the run (cumulative, excludes 0 and the row end). */
   seamPositions: readonly Mm[];
   /** Start-piece length (offset that drives the stagger). */
   startOffset: Mm;
@@ -190,7 +233,8 @@ export interface LayoutOption {
   kind: "balanced" | "unbalanced";
   recommended: boolean;
   reason: string;
-  rows: Row[];
+  /** Every row meets the minimum row width. */
+  valid: boolean;
 }
 
 // ───────────────────────────── Cutting & material ─────────────────────────────
@@ -200,21 +244,32 @@ export interface CutItem {
   pieceId: string;
   rowIndex: number;
   indexInRow: number;
+  /** Length to cut (the longer long edge). */
   length: Mm;
+  /** Shorter long edge of an angled end cut. */
+  lengthShort?: Mm;
+  /** Width (the wider end). */
   width: Mm;
+  /** Narrow-end width of a taper rip. */
+  widthNarrow?: Mm;
+  /** Taper only: the narrow end is the far end (in laying direction). */
+  narrowAtEnd?: boolean;
   kind: PieceKind;
-  /** Board (or offcut) it was cut from. */
+  role: PieceRole;
+  /** Board it is cut from (B1, B2, … numbered in laying order). */
   source: string;
-  /** True when this piece reused a prior offcut rather than a fresh board. */
+  /** True when the board was already opened for an earlier piece (this uses its offcut). */
   reused: boolean;
 }
 
+/** A piece cut from the offcut of a board that was opened for an earlier piece. */
 export interface ReuseEntry {
-  offcutId: string;
   fromBoardId: string;
+  /** The piece the board was first opened for. */
   fromPieceId: string;
   usedByPieceId: string;
   lengthUsed: Mm;
+  /** What is left of the board after this cut (waste unless reused again). */
   remainder: Mm;
 }
 

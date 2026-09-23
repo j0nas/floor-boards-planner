@@ -5,11 +5,11 @@
  *  2. Balance the rows across the cross extent so the leftover never becomes a
  *     sliver (reuses the same border-balancing as the quad engine).
  *  3. Tile each row with staggered boards whose run-direction seams come from the
- *     quad engine's `planRowPieces`, rebalancing any sub-minimum tail piece so we
- *     never cut a run-direction sliver. Each board is clipped to the region, so
- *     concave corners and cavities split it into the right pieces.
+ *     quad engine's `planRowPieces`, choosing each row's start so no piece is a
+ *     run-direction sliver where the geometry allows. Each board is clipped to the
+ *     region, so concave corners and cavities split it into the right pieces.
  *  4. Pack the resulting cut lengths onto boards with offcut reuse (the quad
- *     engine's cutting pass), so the board count and waste are realistic.
+ *     engine's end-aware cutting pass), so the board count and waste are realistic.
  *  5. Flag any remaining slivers (small fragments clipping leaves around concave
  *     corners) so they are highlighted rather than silently mislabelled.
  */
@@ -27,6 +27,7 @@ import type {
   Geometry,
   Inputs,
   Piece,
+  PieceRole,
   Plan,
   PlanScore,
   Point,
@@ -80,14 +81,6 @@ function boardRect(
   ];
 }
 
-/** Run/cross extents of a ring's bounding box. */
-function extentOf(ring: Ring, runIsX: boolean): { runLen: number; crossLen: number } {
-  const b = bboxOf([ring]);
-  const dx = b.maxX - b.minX;
-  const dy = b.maxY - b.minY;
-  return runIsX ? { runLen: dx, crossLen: dy } : { runLen: dy, crossLen: dx };
-}
-
 /** Min/max of a ring's bounding box along the run axis. */
 function runRange(ring: Ring, runIsX: boolean): { min: number; max: number } {
   const b = bboxOf([ring]);
@@ -95,21 +88,74 @@ function runRange(ring: Ring, runIsX: boolean): { min: number; max: number } {
 }
 
 /**
- * Run-direction piece lengths for one row span, starting with a `startLen` piece
- * then full boards, with a sub-minimum tail piece rebalanced into its neighbour
- * (split if that would exceed a board, else merged) so no run-direction sliver
- * is cut. A board is never longer than `bl`, so the split keeps both halves cuttable.
+ * Extent of a ring along one axis where it crosses a line: with `fixCross` the
+ * line is cross = `at` and the run extent is returned, otherwise the line is
+ * run = `at` and the cross extent is returned (0 when the line misses).
  */
-function runSegments(span: Mm, bl: Mm, startLen: Mm, minPiece: Mm): Mm[] {
-  const ls = planRowPieces(span, bl, Math.min(startLen, span));
-  if (ls.length >= 2 && ls[ls.length - 1]! < minPiece - EPS) {
-    const last = ls.pop()!;
-    const prev = ls.pop()!;
-    const combined = prev + last;
-    if (combined <= bl + EPS) ls.push(combined);
-    else ls.push(combined / 2, combined / 2);
+function chordAt(ring: Ring, runIsX: boolean, fixCross: boolean, at: number): number {
+  const fixed = (p: Point) => (runIsX ? p.y : p.x);
+  const other = (p: Point) => (runIsX ? p.x : p.y);
+  const get = fixCross ? fixed : other;
+  const measure = fixCross ? other : fixed;
+  let lo = Number.POSITIVE_INFINITY;
+  let hi = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i]!;
+    const b = ring[(i + 1) % ring.length]!;
+    const fa = get(a) - at;
+    const fb = get(b) - at;
+    if (fa > 0 === fb > 0 && fa !== 0 && fb !== 0) continue;
+    if (fa === fb) {
+      lo = Math.min(lo, measure(a), measure(b));
+      hi = Math.max(hi, measure(a), measure(b));
+      continue;
+    }
+    const m = measure(a) + (fa / (fa - fb)) * (measure(b) - measure(a));
+    lo = Math.min(lo, m);
+    hi = Math.max(hi, m);
   }
-  return ls;
+  return hi > lo ? hi - lo : 0;
+}
+
+/**
+ * Cut dimensions of a clipped piece, the way they are marked on a board: the
+ * length along each long edge (they differ where a wall cuts the end at an
+ * angle) and the width at each end (they differ where a wall tapers it).
+ */
+function measurePiece(ring: Ring, runIsX: boolean) {
+  const b = bboxOf([ring]);
+  const [uMin, uMax, vMin, vMax] = runIsX
+    ? [b.minX, b.maxX, b.minY, b.maxY]
+    : [b.minY, b.maxY, b.minX, b.maxX];
+  const du = Math.min(0.05, (uMax - uMin) / 4);
+  const dv = Math.min(0.05, (vMax - vMin) / 4);
+  const lenA = chordAt(ring, runIsX, true, vMin + dv);
+  const lenB = chordAt(ring, runIsX, true, vMax - dv);
+  const wStart = chordAt(ring, runIsX, false, uMin + du);
+  const wEnd = chordAt(ring, runIsX, false, uMax - du);
+  const faceLength = uMax - uMin;
+  const faceWidth = vMax - vMin;
+  const shortLen = Math.min(lenA, lenB);
+  const narrow = Math.min(wStart, wEnd);
+  return {
+    lenA,
+    lenB,
+    faceLength,
+    faceLengthShort: faceLength - shortLen > EPS ? shortLen : undefined,
+    faceWidth,
+    faceWidthNarrow: faceWidth - narrow > EPS ? narrow : undefined,
+    narrowAtEnd: faceWidth - narrow > EPS ? wEnd < wStart : undefined,
+  };
+}
+
+/**
+ * Run-direction piece lengths for one row span: a `startLen` piece, then full
+ * boards, then the end piece. (A short tail is avoided by choosing the start,
+ * never by splitting it into two shorter pieces: a piece in the middle of a row
+ * must be a whole board, or its cut end has no profile to click into.)
+ */
+function runSegments(span: Mm, bl: Mm, startLen: Mm): Mm[] {
+  return planRowPieces(span, bl, Math.min(startLen, span));
 }
 
 /** Min distance between two interior-seam sets (absolute run coords); ∞ if either is empty. */
@@ -125,12 +171,14 @@ function rowTiling(
   spans: readonly { min: Mm; max: Mm }[],
   bl: Mm,
   startLen: Mm,
-  minPiece: Mm,
-): { perSpan: Mm[][]; seams: number[] } {
+): { perSpan: Mm[][]; seams: number[]; minPiece: Mm } {
   const perSpan: Mm[][] = [];
   const seams: number[] = [];
+  let minPiece = Number.POSITIVE_INFINITY;
   for (const span of spans) {
-    const segs = runSegments(span.max - span.min, bl, startLen, minPiece);
+    const segs = runSegments(span.max - span.min, bl, startLen);
+    // A span too short for more than one piece is what it is, whatever the start.
+    if (segs.length > 1) minPiece = Math.min(minPiece, ...segs);
     perSpan.push(segs);
     let acc = span.min;
     for (let i = 0; i < segs.length - 1; i++) {
@@ -138,7 +186,7 @@ function rowTiling(
       seams.push(acc);
     }
   }
-  return { perSpan, seams };
+  return { perSpan, seams, minPiece };
 }
 
 /**
@@ -148,7 +196,8 @@ function rowTiling(
  * could drop a seam a quarter-board from its neighbour while the plan still
  * claimed a healthy stagger.
  *
- * The picker saturates each clearance at `minStagger` (once a row is far enough
+ * Starts that would cut a run-direction sliver are dropped first. The picker
+ * then saturates each clearance at `minStagger` (once a row is far enough
  * it stops competing) and is lexicographic: clear the immediately adjacent row
  * first, then the skip row (avoids the every-other-row ladder), then maximise the
  * overall spread. `randomness > 0` instead picks a seeded-random start from the
@@ -170,16 +219,19 @@ function chooseRowStart(
   const steps = 64;
   for (let i = 0; i <= steps; i++) candidates.push(minPiece + ((bl - minPiece) * i) / steps);
 
-  const scored = candidates.map((startLen) => {
-    const { perSpan, seams } = rowTiling(spans, bl, startLen, minPiece);
+  const all = candidates.map((startLen) => {
+    const tiling = rowTiling(spans, bl, startLen);
     return {
       startLen,
-      perSpan,
-      seams,
-      gapPrev: seamGap(seams, prev),
-      gapPrev2: seamGap(seams, prev2),
+      ...tiling,
+      gapPrev: seamGap(tiling.seams, prev),
+      gapPrev2: seamGap(tiling.seams, prev2),
     };
   });
+  // Keep only starts that leave no run-direction sliver; when none can, keep the
+  // starts whose shortest piece is longest (the sliver is then flagged).
+  const bestMin = Math.max(...all.map((c) => Math.min(c.minPiece, minPiece)));
+  const scored = all.filter((c) => Math.min(c.minPiece, minPiece) >= bestMin - EPS);
   const idx = pickStaggerIndex(scored, minStagger, bl, randomness, rand);
   const c = scored[idx]!;
   return { startLen: c.startLen, seams: c.seams, perSpan: c.perSpan, gapPrev: c.gapPrev };
@@ -191,15 +243,27 @@ function uniformGapMm(inputs: Inputs): number {
   return Math.max(g.near, g.far, g.left, g.right);
 }
 
+/** Overrides for laying a quad room with this engine. */
+export interface PolygonPlanOptions {
+  /** The usable floor, when it is known exactly (a quad inset by per-wall gaps). */
+  region?: readonly Ring[];
+  /** Replaces the custom-shape note, to say why this engine was used. */
+  note?: string;
+}
+
 /**
  * Build a polygon-room plan for one run axis, or null when no usable region
  * remains (gap too large / degenerate outline).
  */
-export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
+export function buildPolygonPlan(
+  inputs: Inputs,
+  runAxis: Axis,
+  opts: PolygonPlanOptions = {},
+): Plan | null {
   const { board, tunables: t } = inputs;
   const bl = board.length;
   const bw = board.width;
-  const region = insetRoom(roomOutline(inputs.room), uniformGapMm(inputs)).filter(
+  const region = (opts.region ?? insetRoom(roomOutline(inputs.room), uniformGapMm(inputs))).filter(
     (r) => Math.abs(ringsArea([r])) > 1,
   );
   if (!region.length) return null;
@@ -265,45 +329,67 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
 
     let idx = 0;
     spans.forEach((span, s) => {
+      const segs = choice.perSpan[s]!;
       let runPos = span.min;
-      for (const segLen of choice.perSpan[s]!) {
+      segs.forEach((segLen, j) => {
         const rect = boardRect(runPos, rowCross, segLen, w, runIsX);
         runPos += segLen;
         const clipped = clipRings([rect], region).filter((r) => Math.abs(ringsArea([r])) > 1);
         for (const ring of clipped) {
-          const { runLen, crossLen } = extentOf(ring, runIsX);
-          const area = Math.abs(ringsArea([ring]));
-          const isFull =
-            approxEq(runLen, bl, 2) && approxEq(crossLen, bw, 2) && approxEq(area, bl * bw, 2);
-          const id = `r${k}-p${idx++}`;
-          const kind: Piece["kind"] = isFull ? "full" : "cut-length";
-          pieces.push({
+          const m = measurePiece(ring, runIsX);
+          const whole = approxEq(m.lenA, bl) && approxEq(m.lenB, bl);
+          const kind: Piece["kind"] =
+            whole && approxEq(m.faceWidth, bw) && m.faceWidthNarrow === undefined
+              ? "full"
+              : "cut-length";
+          // Its place in the span decides which factory end a cut piece keeps.
+          const role: PieceRole = whole
+            ? "full"
+            : segs.length === 1
+              ? "free"
+              : j === 0
+                ? "start"
+                : j === segs.length - 1
+                  ? "end"
+                  : "full";
+          const id = `r${k}-p${idx}`;
+          const piece: Piece = {
             id,
             rowIndex: k,
             indexInRow: idx,
             poly: ring,
-            faceLength: runLen,
-            faceWidth: crossLen,
+            faceLength: m.faceLength,
+            faceLengthShort: m.faceLengthShort,
+            faceWidth: m.faceWidth,
+            faceWidthNarrow: m.faceWidthNarrow,
+            narrowAtEnd: m.narrowAtEnd,
             kind,
-            isRipped: crossLen < bw - EPS,
-          });
+            role,
+            isRipped: Math.min(m.faceWidth, m.faceWidthNarrow ?? m.faceWidth) < bw - EPS,
+          };
+          idx++;
+          pieces.push(piece);
           // One cut-demand per piece: cut to its run length, at the row's width.
           demand.push({
             pieceId: id,
             rowIndex: k,
-            indexInRow: idx,
-            length: runLen,
-            width: crossLen,
+            indexInRow: piece.indexInRow,
+            length: piece.faceLength,
+            lengthShort: piece.faceLengthShort,
+            width: piece.faceWidth,
+            widthNarrow: piece.faceWidthNarrow,
+            narrowAtEnd: piece.narrowAtEnd,
             kind,
+            role,
           });
         }
-      }
+      });
     });
   });
   if (!pieces.length) return null;
 
   // Pack the cut lengths onto boards with offcut reuse → realistic board count.
-  const cut = assignCuts(demand, bl, t.kerf, t.minPiece);
+  const cut = assignCuts(demand, bl, t.kerf);
   const sourceById = new Map(cut.cutList.map((c) => [c.pieceId, c]));
   for (const p of pieces) {
     const c = sourceById.get(p.id);
@@ -329,10 +415,13 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
     runAxis,
     crossAxis: runIsX ? "Y" : "X",
     runLength: runSpan,
+    runLengthEnd: runSpan,
     crossWidthStart: crossMax - crossMin,
     crossWidthEnd: crossMax - crossMin,
     crossVaries: false,
-    innerOrigin: { x: bb.minX, y: bb.minY } as Point,
+    runVaries: false,
+    innerOrigin: { x: bb.minX, y: bb.minY },
+    inner: region[0] ?? [],
   };
   // A single-piece row (or a one-row layout) has no interior seams, so the
   // stagger is vacuously fine — only finite observations gate validity.
@@ -358,6 +447,7 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
       severity: "info",
       code: "poly.heuristic",
       message:
+        opts.note ??
         "Custom shape: rows are balanced and boards are clipped to the outline, with offcut reuse. Cut pieces around concave corners are an estimate — verify the trickier cuts on site.",
     },
   ];
@@ -366,7 +456,7 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
   const g = inputs.gap;
   const gMin = Math.min(g.near, g.far, g.left, g.right);
   const gMax = Math.max(g.near, g.far, g.left, g.right);
-  if (gMax - gMin > EPS)
+  if (!opts.region && gMax - gMin > EPS)
     diagnostics.push({
       severity: "info",
       code: "poly.uniformGap",
@@ -389,7 +479,7 @@ export function buildPolygonPlan(inputs: Inputs, runAxis: Axis): Plan | null {
         kind: "unbalanced",
         recommended: true,
         reason: "Boards laid straight and clipped to the room outline.",
-        rows: [],
+        valid: true,
       },
     ],
     chosenOptionIndex: 0,
