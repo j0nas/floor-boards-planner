@@ -14,7 +14,7 @@ list, and material estimate live.
 ```bash
 pnpm install
 pnpm dev          # vp dev — open the printed localhost URL
-pnpm test         # vitest — domain + UI unit tests
+pnpm test         # vp test --run (bundled Vitest) — domain + UI unit tests
 pnpm build        # tsc + vp build → dist/
 pnpm typecheck    # tsc --noEmit
 ```
@@ -65,8 +65,23 @@ orientations and chooses the better one (unless forced).
 
 ## Tooling note
 
-Vite+ 0.1.x ships a `vp test` whose Vitest binary doesn't resolve under pnpm's
-isolated store, and it overrides `vitest` to a CLI-less wrapper. This project
-points the pnpm catalog's `vitest` at the real package and runs tests with a
-dedicated `vitest.config.ts` (Vitest's own `defineConfig`, bypassing the
-vite-plus wrapper). `vp dev`/`vp build`/`vp check` are unaffected.
+- **Versions:** `vite-plus` is pinned in the pnpm catalog
+  (`pnpm-workspace.yaml`), with `vite` aliased to
+  `@voidzero-dev/vite-plus-core` at the **same** version (plus a `vite@*`
+  override so plugins share that one Vite). Upgrade both together with
+  `vp migrate`, which re-pins them to the version of the `vp` running it, then
+  `vp install`.
+- **Tests** run on the Vitest bundled with `vite-plus`: config is the `test`
+  block in `vite.config.ts`, and test files import from `vite-plus/test`.
+  There is deliberately no standalone `vitest` dependency or
+  `vitest.config.ts`: a second Vitest copy splits runner state
+  (`describe`/`expect`/mocks).
+- **Global vs local `vp`:** `pnpm test` / `pnpm build` / `pnpm exec vp …`
+  always use the project's own `vite-plus`. The standalone global `vp`
+  (`curl -fsSL https://vite.plus | bash`) forwards `vp dev`/`build`/`test` to
+  that local package too. A `vp` installed as the **npm package** (e.g. mise
+  `npm:vite-plus`) does not: it runs its own bundled tools, including for
+  `vpr`/`vp run` scripts. Its `vp dev`/`build` then require its version to
+  equal the pinned one, and its `vp test` can't work here (its Vitest and the
+  project's are separate copies, and it can't resolve the project's `jsdom`).
+  With that setup, use `pnpm test`.
