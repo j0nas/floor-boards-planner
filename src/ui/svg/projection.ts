@@ -39,9 +39,15 @@ function boundsOf(points: readonly Point[]): Bounds {
 /**
  * Fit a set of room-mm points into a px canvas, preserving aspect ratio and
  * centering. Room Y is flipped so the near wall (y=0) sits at the bottom — the
- * view reads like standing in the doorway looking into the room.
+ * view reads like standing at the near wall looking into the room. `turned`
+ * turns the view half a turn: the far wall at the bottom, left and right swapped.
  */
-export function fitProjection(points: readonly Point[], maxPx = 1000, padding = 36): Projection {
+export function fitProjection(
+  points: readonly Point[],
+  maxPx = 1000,
+  padding = 36,
+  turned = false,
+): Projection {
   const b = boundsOf(
     points.length
       ? points
@@ -59,16 +65,19 @@ export function fitProjection(points: readonly Point[], maxPx = 1000, padding = 
   const width = wMm * scale + 2 * padding;
   const height = hMm * scale + 2 * padding;
 
-  const toPx = (p: Point): Point => ({
-    x: padding + (p.x - b.minX) * scale,
-    // flip Y: room top (maxY) maps to small py
-    y: padding + (b.maxY - p.y) * scale,
-  });
+  const toPx = (p: Point): Point =>
+    turned
+      ? { x: padding + (b.maxX - p.x) * scale, y: padding + (p.y - b.minY) * scale }
+      : {
+          x: padding + (p.x - b.minX) * scale,
+          // flip Y: room top (maxY) maps to small py
+          y: padding + (b.maxY - p.y) * scale,
+        };
 
-  const toMm = (p: Point): Point => ({
-    x: (p.x - padding) / scale + b.minX,
-    y: b.maxY - (p.y - padding) / scale,
-  });
+  const toMm = (p: Point): Point =>
+    turned
+      ? { x: b.maxX - (p.x - padding) / scale, y: b.minY + (p.y - padding) / scale }
+      : { x: (p.x - padding) / scale + b.minX, y: b.maxY - (p.y - padding) / scale };
 
   return {
     scale,

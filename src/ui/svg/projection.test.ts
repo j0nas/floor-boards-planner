@@ -31,6 +31,16 @@ describe("fitProjection", () => {
     expect(proj.toPx({ x: 0, y: 3000 }).x).toBeCloseTo(50, 6);
   });
 
+  test("turned half a turn: the far wall at the bottom, left and right swapped", () => {
+    const proj = fitProjection(square, 1000, 50, true);
+    const nearLeft = proj.toPx({ x: 0, y: 0 });
+    expect(nearLeft.x).toBeCloseTo(proj.width - 50, 6); // near-left corner now top-right
+    expect(nearLeft.y).toBeCloseTo(50, 6);
+    const back = proj.toMm(proj.toPx({ x: 1234, y: 567 }));
+    expect(back.x).toBeCloseTo(1234, 6);
+    expect(back.y).toBeCloseTo(567, 6);
+  });
+
   test("px converts mm lengths consistently with scale", () => {
     const proj = fitProjection(square, 1000, 0);
     expect(proj.px(4000)).toBeCloseTo(1000, 6);
