@@ -5,6 +5,7 @@ import {
   type RoomShape,
   roomOutline,
 } from "../../domain/index.ts";
+import { rowLabel } from "../exports.ts";
 import { type Projection, centroidPx, polyToPoints } from "../svg/projection.ts";
 
 interface Props {
@@ -55,7 +56,20 @@ function sizeLabel(p: Piece): string {
 export function SvgPlan({ plan, pieces, room, doors = [], proj }: Props) {
   const roomPts = polyToPoints(roomOutline(room), proj);
 
-  const labelFits = (p: Piece) => proj.px(p.faceLength) > 46 && proj.px(p.faceWidth) > 16;
+  const labelFits = (p: Piece) => proj.px(p.faceLength) > 60 && proj.px(p.faceWidth) > 16;
+  // Each piece is named as in the cut list (r3 #1, door 1 #1) with the board it
+  // comes from, so a cut piece can be marked and its offcut matched up later.
+  const cutById = new Map(plan.cutList.map((c) => [c.pieceId, c]));
+  const nameOf = (p: Piece) => {
+    const c = cutById.get(p.id);
+    if (!c) return null;
+    const row = rowLabel(plan, c);
+    return {
+      ref: `${row.startsWith("door") ? row : `r${row}`} #${c.indexInRow + 1}`,
+      board: c.source,
+      offcut: c.reused,
+    };
+  };
 
   return (
     <svg
@@ -114,6 +128,12 @@ export function SvgPlan({ plan, pieces, room, doors = [], proj }: Props) {
         const pts = polyToPoints(p.poly, proj);
         const c = centroidPx(p.poly, proj);
         const sliver = p.undersized === true;
+        const name = nameOf(p);
+        // Name and size on two lines where the piece is tall enough; otherwise
+        // the name alone (it's what you mark on the board), and the size on hover.
+        const fits = labelFits(p);
+        const twoLines = fits && proj.px(p.faceWidth) > 34;
+        const tip = `${name ? `${name.ref} · ${name.board}: ` : ""}${sizeLabel(p)} mm (${p.kind}${sliver ? " — below min" : ""})`;
         return (
           <g key={p.id}>
             <polygon
@@ -124,21 +144,43 @@ export function SvgPlan({ plan, pieces, room, doors = [], proj }: Props) {
             />
             {p.isRipped ? <polygon points={pts} fill="url(#ripHatch)" stroke="none" /> : null}
             {sliver ? <polygon points={pts} fill="url(#sliverHatch)" stroke="none" /> : null}
-            {labelFits(p) ? (
+            <title>{tip}</title>
+            {fits ? (
               <text
                 x={c.x}
-                y={c.y}
+                y={twoLines ? c.y - 8 : c.y}
                 textAnchor="middle"
                 dominantBaseline="central"
-                fontSize={11}
+                fontSize={twoLines ? 14 : 13}
                 fill="#0f172a"
+                className="pointer-events-none select-none"
+              >
+                {name ? (
+                  <>
+                    <tspan fontWeight={600}>{name.ref}</tspan>
+                    {" · "}
+                    <tspan fontWeight={600} fill={name.offcut ? "#047857" : "#0f172a"}>
+                      {name.board}
+                    </tspan>
+                  </>
+                ) : (
+                  sizeLabel(p)
+                )}
+              </text>
+            ) : null}
+            {twoLines && name ? (
+              <text
+                x={c.x}
+                y={c.y + 9}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={12}
+                fill="#334155"
                 className="pointer-events-none select-none"
               >
                 {sizeLabel(p)}
               </text>
-            ) : (
-              <title>{`${sizeLabel(p)} mm (${p.kind}${sliver ? " — below min" : ""})`}</title>
-            )}
+            ) : null}
           </g>
         );
       })}
@@ -173,6 +215,11 @@ export function PlanLegend() {
         border={SLIVER_STROKE}
       />
       <LegendSwatch label="Expansion gap" color="#f87171" />
+      <span className="basis-full text-slate-500">
+        Each piece is named as in the cut list — row and piece (r3 #1) and the board it's cut from
+        (B2). Pieces with the same board number come from one board: mark it on both halves when you
+        cut. A green number is an offcut.
+      </span>
     </div>
   );
 }
