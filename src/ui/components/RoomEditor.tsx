@@ -96,7 +96,7 @@ export function RoomEditor({ inputs, setInputs }: Props) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between print:hidden">
         <p className="text-[11px] text-slate-500">
           Drag corners to reshape · click a ＋ on an edge to add a wall · select a corner to remove
           it.
@@ -230,6 +230,7 @@ export function RoomEditor({ inputs, setInputs }: Props) {
                   onChange={(v) => setInputs((p) => ({ ...p, room: setWallLength(p.room, i, v) }))}
                   label=""
                   step={10}
+                  decimals={1}
                   widthCh={4}
                   title={`Length of wall ${i + 1}`}
                 />

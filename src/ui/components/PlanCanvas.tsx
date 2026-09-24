@@ -26,7 +26,8 @@ interface Props {
 /**
  * The plan IS the interface: for a rectangular/quad room the four measurements
  * are editable chips framing the drawing (each on the wall it measures), and the
- * expansion gap is an editable chip on the red gap ring. Edit anything and the
+ * expansion gap is an editable chip in the corner beside it — never on the
+ * drawing, where it would hide a piece's label. Edit anything and the
  * floor redraws. (Multi-wall outlines are edited in the polygon editor instead.)
  */
 export function PlanCanvas({ inputs, setInputs, plan, pieces, gapWarn }: Props) {
@@ -50,8 +51,20 @@ export function PlanCanvas({ inputs, setInputs, plan, pieces, gapWarn }: Props) 
       className="grid items-center justify-items-center gap-1"
       style={{ gridTemplateColumns: "auto minmax(0,1fr) auto" }}
     >
-      {/* top: far wall width */}
-      <div />
+      {/* top: the expansion gap (in the corner, clear of the drawing) · far wall width */}
+      <EditableDim
+        value={gap.near}
+        onChange={(v) => setInputs((p) => ({ ...p, gap: uniformGap(v) }))}
+        label="gap"
+        tone={gapWarn ? "red" : "default"}
+        step={1}
+        widthCh={2}
+        title={
+          gapWarn
+            ? "Expansion gap (all walls) — below the recommended minimum"
+            : "Expansion gap (all walls)"
+        }
+      />
       {rect ? (
         <EditableDim
           value={rect.widthFar}
@@ -75,7 +88,7 @@ export function PlanCanvas({ inputs, setInputs, plan, pieces, gapWarn }: Props) 
       ) : (
         <div />
       )}
-      <div className="relative w-full">
+      <div className="w-full">
         <SvgPlan
           plan={plan}
           pieces={pieces}
@@ -83,21 +96,6 @@ export function PlanCanvas({ inputs, setInputs, plan, pieces, gapWarn }: Props) 
           doors={doors.map((d) => d.ring)}
           proj={proj}
         />
-        <div className="absolute left-2 top-2">
-          <EditableDim
-            value={gap.near}
-            onChange={(v) => setInputs((p) => ({ ...p, gap: uniformGap(v) }))}
-            label="gap"
-            tone={gapWarn ? "red" : "default"}
-            step={1}
-            widthCh={2}
-            title={
-              gapWarn
-                ? "Expansion gap (all walls) — below the recommended minimum"
-                : "Expansion gap (all walls)"
-            }
-          />
-        </div>
       </div>
       {rect ? (
         <EditableDim
