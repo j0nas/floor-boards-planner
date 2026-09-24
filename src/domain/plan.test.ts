@@ -353,17 +353,16 @@ describe("regression — a taper the last row can't absorb is clipped across row
 
 describe("real room — the pantry laid in 2026-09 (Pergo Trondheim 2050 × 211)", () => {
   // Measured on site (mm): door wall A–B 2887, B–C 1677, back wall C–D 2880,
-  // D–A 1675, both diagonals 3325. Laid from the back wall, so it is entered
-  // with the back wall as "near" (seen from there, A–D is left); boards along the
-  // long walls; saw kerf 3; the owner's choice of a 5 mm gap; the 704 mm door
-  // (opening into the hallway, 1145.5 mm from B–C) floored 81 mm through the
-  // wall to the threshold, 10 mm under each jamb.
+  // D–A 1675, both diagonals 3325. Entered with the door wall as "near", seen
+  // from the doorway (so B is near-left); boards along the long walls; saw kerf 3;
+  // the owner's choice of a 5 mm gap; the 704 mm door (opening into the hallway)
+  // floored 81 mm through the wall to the threshold, 10 mm under each jamb.
   const inputs = clone(DEFAULT_INPUTS);
-  inputs.room = rectRoom({ widthNear: 2880, widthFar: 2887, lengthLeft: 1675, lengthRight: 1677 });
+  inputs.room = rectRoom({ widthNear: 2887, widthFar: 2880, lengthLeft: 1677, lengthRight: 1675 });
   inputs.board = { length: 2050, width: 211, thickness: 9.5 };
   inputs.gap = { near: 5, far: 5, left: 5, right: 5 };
   inputs.orientation = { mode: "forced", runAxis: "X" };
-  inputs.openings = [{ wall: 2, offset: 1145.5, width: 704, depth: 81, tuck: 10 }];
+  inputs.openings = [{ wall: 0, offset: 1145.5, width: 704, depth: 81, tuck: 10 }];
   inputs.tunables = { ...inputs.tunables, kerf: 3 };
   const result = computePlans(inputs);
   const plan = result.plans[result.chosenAxis]!;
@@ -374,7 +373,7 @@ describe("real room — the pantry laid in 2026-09 (Pergo Trondheim 2050 × 211)
     assertInvariants(plan, inputs);
   });
 
-  test("seven full rows from the back wall, the door row ripped 188 → 190 mm to fit", () => {
+  test("seven full rows from the door wall, one 190 → 188 mm rip at the back wall", () => {
     expect(plan.rows.map((r) => Math.round(r.rowWidth))).toEqual([
       211, 211, 211, 211, 211, 211, 211, 190,
     ]);
@@ -383,39 +382,32 @@ describe("real room — the pantry laid in 2026-09 (Pergo Trondheim 2050 × 211)
 
   test("the cut list that was handed to the installer", () => {
     expect(plan.rows.map((r) => r.pieceLengths.map((l) => Math.round(l)))).toEqual([
-      [1778, 1093],
-      [1095, 1777],
-      [412, 2050, 411],
-      [1778, 1095],
-      [1095, 1779],
+      [1778, 1099],
+      [1095, 1781],
       [412, 2050, 414],
-      [1778, 1098],
-      [1095, 1782],
+      [1778, 1096],
+      [1095, 1778],
+      [412, 2050, 411],
+      [1778, 1093],
+      [1095, 1776],
     ]);
     expect(plan.material.boardsConsumed).toBe(14);
     expect(plan.material.recommendedPurchasePacks).toBe(3);
     // Four boards give an end piece and a start piece from opposite ends, and
-    // the door row's start board gives the doorway strip from its offcut.
+    // row 8's start board gives the doorway strip from its offcut.
     const byBoard = new Map<string, string[]>();
     for (const c of plan.cutList)
       byBoard.set(c.source, [...(byBoard.get(c.source) ?? []), `r${c.rowIndex + 1}-${c.role}`]);
     const shared = [...byBoard.values()].filter((v) => v.length > 1).map((v) => v.join("+"));
     expect(shared).toEqual([
-      "r2-start+r6-end",
-      "r3-start+r7-end",
-      "r3-end+r5-start",
+      "r1-end+r3-start",
+      "r2-start+r3-end",
       "r4-end+r6-start",
-      "r8-start+r9-free",
+      "r5-start+r6-end",
+      "r8-start+r0-free",
     ]);
-    // The door row stays 211 wide across the doorway (1033 mm into its first
-    // piece, 641 mm into its second), and the strip clicks onto that edge.
-    const tabs = plan.cutList.filter((c) => c.doorTab).map((c) => c.doorTab!);
-    expect(tabs.map((t) => t.spans.map((s) => [Math.round(s.from), Math.round(s.to)]))).toEqual([
-      [[1032, 1095]],
-      [[0, 641]],
-    ]);
-    const strip = plan.cutList.find((c) => c.opening === 0 && !c.doorTab)!;
+    const strip = plan.cutList.find((c) => c.opening === 0)!;
     expect(Math.round(strip.length)).toBe(724);
-    expect(Math.round(strip.width)).toBe(64);
+    expect(Math.round(strip.width)).toBe(86);
   });
 });
