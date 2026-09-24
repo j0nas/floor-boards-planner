@@ -380,7 +380,45 @@ describe("real room — the pantry laid in 2026-09 (Pergo Trondheim 2050 × 211)
     expect(Math.round(plan.rows[7]!.rowWidthNarrow)).toBe(188);
   });
 
-  test("the cut list that was handed to the installer", () => {
+  test("the cut list that was handed to the installer — 12 boards, offcuts chained", () => {
+    expect(plan.rows.map((r) => r.pieceLengths.map((l) => Math.round(l)))).toEqual([
+      [2050, 827],
+      [1175, 1701],
+      [346, 2050, 479],
+      [1568, 1307],
+      [2050, 823],
+      [1224, 1649],
+      [398, 2050, 424],
+      [1623, 1248],
+    ]);
+    // The least a room of eight ~2.87 m rows plus a 724 mm doorway piece can
+    // take: 23.7 m of board, and 11 boards are only 22.6 m.
+    expect(plan.material.boardsConsumed).toBe(12);
+    expect(plan.material.recommendedPurchasePacks).toBe(3);
+    expect(plan.stagger.minObservedStagger).toBeGreaterThanOrEqual(inputs.tunables.minStagger);
+    // Each row's end offcut starts the next row (row 4's gives the doorway strip).
+    const byBoard = new Map<string, string[]>();
+    for (const c of plan.cutList)
+      byBoard.set(c.source, [...(byBoard.get(c.source) ?? []), `r${c.rowIndex + 1}-${c.role}`]);
+    const shared = [...byBoard.values()].filter((v) => v.length > 1).map((v) => v.join("+"));
+    expect(shared).toEqual([
+      "r1-end+r2-start",
+      "r2-end+r3-start",
+      "r3-end+r4-start",
+      "r4-end+r0-free",
+      "r5-end+r6-start",
+      "r6-end+r7-start",
+      "r7-end+r8-start",
+    ]);
+    const strip = plan.cutList.find((c) => c.opening === 0)!;
+    expect(Math.round(strip.length)).toBe(724);
+    expect(Math.round(strip.width)).toBe(86);
+  });
+
+  test("the even pattern: the 14-board plan printed first", () => {
+    const evenInputs = { ...inputs, tunables: { ...inputs.tunables, pattern: "even" as const } };
+    const plan = computePlans(evenInputs).plans.X!;
+    assertInvariants(plan, evenInputs);
     expect(plan.rows.map((r) => r.pieceLengths.map((l) => Math.round(l)))).toEqual([
       [1778, 1099],
       [1095, 1781],

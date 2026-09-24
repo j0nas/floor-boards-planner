@@ -3,6 +3,7 @@ import {
   type Inputs,
   type Orientation,
   type Plan,
+  type StaggerPattern,
   longAxis,
   mm2ToM2,
 } from "../../domain/index.ts";
@@ -57,6 +58,9 @@ export function InputsPanel({ inputs, setInputs, onReset, activePlan }: Props) {
     set((p) => ({ ...p, tunables: { ...p.tunables, staggerRandomness: pct / 100 } }));
   const reshuffle = () =>
     set((p) => ({ ...p, tunables: { ...p.tunables, staggerSeed: p.tunables.staggerSeed + 1 } }));
+  const pattern = inputs.tunables.pattern;
+  const setPattern = (v: StaggerPattern) =>
+    set((p) => ({ ...p, tunables: { ...p.tunables, pattern: v } }));
 
   return (
     <div className="flex flex-col gap-4">
@@ -160,40 +164,74 @@ export function InputsPanel({ inputs, setInputs, onReset, activePlan }: Props) {
 
       <section className="flex flex-col gap-2">
         <SectionTitle>Pattern</SectionTitle>
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <label htmlFor="stagger-randomness" className="text-xs text-slate-600">
-              Randomness
-            </label>
-            <span className="text-xs tabular-nums text-slate-500">{randomnessPct}%</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              id="stagger-randomness"
-              type="range"
-              min={0}
-              max={100}
-              step={5}
-              value={randomnessPct}
-              onChange={(e) => setRandomness(Number(e.target.value))}
-              className="h-1.5 w-full cursor-pointer accent-sky-600"
-            />
+        <div
+          role="radiogroup"
+          aria-label="Joint pattern"
+          className="grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-0.5"
+        >
+          {(
+            [
+              ["leastWaste", "Least waste"],
+              ["even", "Even stagger"],
+            ] as const
+          ).map(([value, label]) => (
             <button
+              key={value}
               type="button"
-              onClick={reshuffle}
-              disabled={randomnessPct === 0}
-              title="Pick a different random pattern"
-              className="shrink-0 rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+              role="radio"
+              aria-checked={pattern === value}
+              onClick={() => setPattern(value)}
+              className={`rounded px-2 py-1 text-xs ${
+                pattern === value
+                  ? "bg-white font-medium text-slate-800 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
             >
-              Reshuffle
+              {label}
             </button>
-          </div>
-          <span className="text-[10px] text-slate-400">
-            {randomnessPct === 0
-              ? "Regular, repeating stagger — change this if the pattern looks too symmetrical."
-              : "Joints are jittered within the safe range (stagger and piece minimums still hold)."}
-          </span>
+          ))}
         </div>
+        <span className="text-[10px] text-slate-400">
+          {pattern === "leastWaste"
+            ? "Picks where rows start so offcuts start or finish later rows — the fewest boards. Joints still keep the minimum stagger, and never line up two rows apart when avoiding it costs nothing."
+            : "A regular stagger of about a third of a board. Can use more boards than least waste."}
+        </span>
+        {pattern === "even" ? (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <label htmlFor="stagger-randomness" className="text-xs text-slate-600">
+                Randomness
+              </label>
+              <span className="text-xs tabular-nums text-slate-500">{randomnessPct}%</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                id="stagger-randomness"
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={randomnessPct}
+                onChange={(e) => setRandomness(Number(e.target.value))}
+                className="h-1.5 w-full cursor-pointer accent-sky-600"
+              />
+              <button
+                type="button"
+                onClick={reshuffle}
+                disabled={randomnessPct === 0}
+                title="Pick a different random pattern"
+                className="shrink-0 rounded border border-slate-300 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Reshuffle
+              </button>
+            </div>
+            <span className="text-[10px] text-slate-400">
+              {randomnessPct === 0
+                ? "Regular, repeating stagger — change this if the pattern looks too symmetrical."
+                : "Joints are jittered within the safe range (stagger and piece minimums still hold)."}
+            </span>
+          </div>
+        ) : null}
       </section>
 
       <details className="rounded-md border border-slate-200 p-2 text-sm">

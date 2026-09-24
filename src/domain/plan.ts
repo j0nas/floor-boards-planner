@@ -2,6 +2,7 @@ import { balanceRows, type LayoutOptionDraft, type RowWidth } from "./balance.ts
 import { chooseAxis } from "./compare.ts";
 import { assignCuts, demandFromPieces } from "./cutting.ts";
 import { computeGeometry, crossWidthAt, runLengthAt, toLocal, toRoom } from "./geometry.ts";
+import { leastWasteStarts, withStarts } from "./leastWaste.ts";
 import { type Doorway, openingOnly, openingRing, passes } from "./openings.ts";
 import {
   type Ring,
@@ -582,8 +583,9 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: nu
   // and rows passing a doorway reach into it).
   const doors = doorways(inputs, geom);
   const frames = frameRows(draft, geom, board.width, doors);
-  const stagger = planStagger(
-    frames.map((f) => f.run),
+  const runs = frames.map((f) => f.run);
+  const even = planStagger(
+    runs,
     board.length,
     t.minPiece,
     t.minStagger,
@@ -591,6 +593,17 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: nu
     t.staggerRandomness ?? 0,
     t.staggerSeed ?? 1,
   );
+  // Least waste (the default) chains offcuts into later rows; it never needs
+  // more boards than the even schedule and keeps it when that's as good.
+  const stagger =
+    t.pattern === "even"
+      ? even
+      : withStarts(
+          even,
+          runs,
+          board.length,
+          leastWasteStarts(runs, board.length, t.minPiece, t.minStagger, t.kerf, even.startOffsets),
+        );
   const rows = buildRows(frames, stagger.startOffsets, board.length);
 
   const { tabs, thin } = edgeTabs(inputs, geom, rows, doors, board.width);

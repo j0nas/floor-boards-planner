@@ -25,6 +25,7 @@ export const DEFAULT_GAP: ExpansionGap = {
 };
 
 export const DEFAULT_TUNABLES: Tunables = {
+  pattern: "leastWaste", // fewest boards; "even" for a regular ⅓-board stagger
   minRowWidth: 50,
   minPiece: 300,
   minStagger: 300,
@@ -40,7 +41,7 @@ export const DEFAULT_TUNABLES: Tunables = {
   // floor, not a target — the gap warning uses Pergo's normal 8 mm.
   minGap: 5,
   safetyMarginPct: 0.1,
-  staggerRandomness: 0, // default to the regular, deterministic pattern
+  staggerRandomness: 0, // "even" pattern only: 0 = regular, deterministic
   staggerSeed: 1, // any positive integer; "reshuffle" just increments it
 };
 

@@ -43,7 +43,8 @@ orientations and chooses the better one (unless forced).
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `geometry.ts`   | Exact usable floor: each wall inset by its own gap; per-row run length (slanted row-end wall) and cross width (slanted side wall → taper)             |
 | `balance.ts`    | Border balancing — split a sliver leftover into two end rows `(leftover+bw)/2`; with a taper, keep the last row within a board and ≥ min at both ends |
-| `stagger.ts`    | P-phase offset schedule (~⅓ board) over each row's own length; **near-multiple-trap** detection and multi-piece rescue; stagger on real seams         |
+| `leastWaste.ts` | The default pattern: row starts chosen so offcuts chain into later rows — the fewest boards, never more than the even schedule, no joint ladders      |
+| `stagger.ts`    | The "even" pattern: P-phase offset schedule (~⅓ board) over each row's own length; **near-multiple-trap** rescue; stagger on real seams               |
 | `cutting.ts`    | End-aware cutting-stock: one board gives at most one start and one end piece (click-joint ends), paired by maximum matching; kerf; laying-order ids   |
 | `taper.ts`      | Out-of-square last-row trapezoid; verifies the gap is held and the narrow end ≥ min row                                                               |
 | `waste.ts`      | Boards, packs, honest waste % (against board area), safe purchase recommendation minus on-hand                                                        |
@@ -76,6 +77,15 @@ orientations and chooses the better one (unless forced).
   reach in, notched at a jamb. Only rows passing the clear opening reach in —
   the strip under an undercut frame is covered where a doorway piece reaches it,
   never by a fragile tab. Adding a door leaves the room's own rows unchanged.
+- **Fewest boards by default.** Cutting pieces onto boards is optimal for the
+  pieces it gets, so waste is decided earlier, by where each row starts. The
+  default "least waste" pattern searches row starts (beam search over the rows,
+  tracking open offcuts, finalists scored by the real cutting pass) so the
+  offcut of one row's end starts a later row. It never needs more boards than
+  the regular ⅓-board "even" pattern — which it keeps when that is as good —
+  holds the minimum stagger and piece length, and avoids joints lining up two
+  rows apart when that costs no board. The quad engine only; custom shapes keep
+  their per-row search.
 - **Stagger is validated on the real seam positions** (cumulative piece sums),
   not on the generating offsets.
 - **Near-multiple trap:** when the run length is close to an integer multiple of

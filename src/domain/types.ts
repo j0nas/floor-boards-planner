@@ -71,8 +71,16 @@ export interface Opening {
   tuck: Mm;
 }
 
+/**
+ * How rows' joints are placed. "leastWaste" picks the starts that use the
+ * fewest boards (offcuts chain into later rows); "even" keeps a regular
+ * stagger of about a third of a board. Both hold the stagger and piece minimums.
+ */
+export type StaggerPattern = "leastWaste" | "even";
+
 /** Tunables with sensible defaults; all lengths in mm. */
 export interface Tunables {
+  pattern: StaggerPattern;
   minRowWidth: Mm; // min first/last row width
   minPiece: Mm; // min installed piece length (start/middle/end)
   minStagger: Mm; // min offset between adjacent-row end joints
