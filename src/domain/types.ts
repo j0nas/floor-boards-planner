@@ -197,6 +197,19 @@ export type PieceRole =
   | "end" // last piece of a row, cut: keeps the joining end facing back into the row
   | "free"; // the only piece in its row: both ends meet walls, cut from anywhere
 
+/**
+ * A ripped edge row keeps its full board width where it passes a doorway in its
+ * wall, notched at each jamb, so its factory edge — the click profile the
+ * doorway strip joins — survives there. The piece is ripped to `ripStart` →
+ * `ripEnd` (its width at the start and far end, laying direction) except along
+ * `spans` (mm from its start end), which are left whole.
+ */
+export interface DoorTab {
+  spans: { from: Mm; to: Mm }[];
+  ripStart: Mm;
+  ripEnd: Mm;
+}
+
 export interface Piece {
   id: string;
   rowIndex: number;
@@ -226,6 +239,8 @@ export interface Piece {
   opening?: number;
   /** True when the piece is L-shaped (notched where part of it enters a doorway). */
   notched?: boolean;
+  /** A ripped row's piece that stays full width across a doorway (see DoorTab). */
+  doorTab?: DoorTab;
   /** Source assignment from the cutting pass. */
   sourceBoardId?: string;
   fromOffcutId?: string;
@@ -293,6 +308,8 @@ export interface CutItem {
   opening?: number;
   /** L-shaped: notched where part of it enters a doorway. */
   notched?: boolean;
+  /** Ripped, except where it stays full width across a doorway. */
+  doorTab?: DoorTab;
 }
 
 /** A piece cut from the offcut of a board that was opened for an earlier piece. */

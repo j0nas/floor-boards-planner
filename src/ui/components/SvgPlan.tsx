@@ -30,6 +30,15 @@ function fmt(n: number): string {
 
 /** "length×width", with both edges of an angled end and both ends of a taper (start→far). */
 function sizeLabel(p: Piece): string {
+  if (p.doorTab) {
+    const { ripStart, ripEnd } = p.doorTab;
+    const rip = fmt(ripStart) === fmt(ripEnd) ? fmt(ripStart) : `${fmt(ripStart)}→${fmt(ripEnd)}`;
+    const len =
+      p.faceLengthShort === undefined
+        ? fmt(p.faceLength)
+        : `${fmt(p.faceLength)}/${fmt(p.faceLengthShort)}`;
+    return `${len}×${rip} (${fmt(p.faceWidth)} at door)`;
+  }
   const len =
     p.faceLengthShort === undefined
       ? fmt(p.faceLength)

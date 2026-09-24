@@ -2,9 +2,10 @@ import { balanceRows, type LayoutOptionDraft, type RowWidth } from "./balance.ts
 import { chooseAxis } from "./compare.ts";
 import { assignCuts, demandFromPieces } from "./cutting.ts";
 import { computeGeometry, crossWidthAt, runLengthAt, toLocal, toRoom } from "./geometry.ts";
-import { type Doorway, openingOnly, passes } from "./openings.ts";
+import { type Doorway, openingOnly, openingRing, passes } from "./openings.ts";
 import {
   type Ring,
+  ccw,
   clipRings,
   differenceRings,
   isConvexRing,
@@ -38,6 +39,8 @@ import { EPS, type Mm, approxEq, differsOnTape, gte, lt } from "./units.ts";
 
 /** Far enough to span any room, for bands clipped against a doorway. */
 const BIG: Mm = 1e6;
+/** Doorway depth below this is nothing left to floor (Clipper works to 0.001 mm). */
+const NOTHING: Mm = 0.05;
 
 /**
  * The door openings of a quad room, sorted by how the rows meet them. An
@@ -97,6 +100,53 @@ function largest(rings: readonly Ring[]): Ring | null {
       .filter((r) => Math.abs(ringsArea([r])) > 1)
       .sort((a, b) => Math.abs(ringsArea([b])) - Math.abs(ringsArea([a])))[0] ?? null
   );
+}
+
+/**
+ * Where a ripped edge row runs along a doorway in its wall, it keeps its full
+ * board width across the clear opening (notched at each jamb): ripping would
+ * take off the long-edge profile the doorway strip clicks onto. `vA`–`vB` is
+ * the full-width band; the strip starts at its outer edge. Skipped when that
+ * would leave a strip too thin to lay (the row is then flagged instead).
+ */
+interface EdgeTab {
+  door: Doorways["crossSide"][number];
+  rowIndex: number;
+  vA: Mm;
+  vB: Mm;
+  clear: Ring;
+}
+
+function edgeTabs(
+  inputs: Inputs,
+  geom: Geometry,
+  rows: readonly Row[],
+  doors: Doorways,
+  bw: Mm,
+): { tabs: EdgeTab[]; thin: { door: number; strip: Mm }[] } {
+  const tabs: EdgeTab[] = [];
+  const thin: { door: number; strip: Mm }[] = [];
+  for (const door of doors.crossSide) {
+    const start = door.side === "start";
+    const row = rows[start ? 0 : rows.length - 1];
+    if (!row?.isRipped) continue;
+    const clear = openingRing(inputs, inputs.openings![door.index]!, true);
+    // A one-row room can't keep full width towards doors on both its sides.
+    if (!clear || tabs.some((tb) => tb.rowIndex === row.index)) {
+      thin.push({ door: door.index, strip: Number.NaN });
+      continue;
+    }
+    const vA = start ? row.crossStart + row.rowWidth - bw : row.crossStart;
+    const vB = vA + bw;
+    const { vMin, vMax } = localBounds(geom, door.rings);
+    const strip = start ? vA - vMin : vMax - vB;
+    if (strip > NOTHING && lt(strip, inputs.tunables.minRowWidth)) {
+      thin.push({ door: door.index, strip });
+      continue;
+    }
+    tabs.push({ door, rowIndex: row.index, vA, vB, clear });
+  }
+  return { tabs, thin };
 }
 
 // ───────────────────────── materialisation ─────────────────────────
@@ -242,6 +292,7 @@ function doorwayStrips(
   geom: Geometry,
   rows: readonly Row[],
   doors: Doorways,
+  tabs: readonly EdgeTab[],
   t: Inputs["tunables"],
   bl: Mm,
   bw: Mm,
@@ -253,14 +304,18 @@ function doorwayStrips(
     const start = door.side === "start";
     const edge = rows[start ? 0 : rows.length - 1];
     if (!edge) continue;
-    const total = start ? -vMin : vMax - vMin;
+    // Strips start at the room's edge, or beyond the edge row's full-width stretch.
+    const tab = tabs.find((tb) => tb.door.index === door.index);
+    const from = tab ? (start ? tab.vA : tab.vB) : start ? 0 : vMin;
+    const total = start ? from - vMin : vMax - from;
+    if (total <= NOTHING) continue; // the edge row covers the whole doorway
     const drafts = balanceRows(total, bw, t.minRowWidth);
     const widths = (drafts.find((d) => d.recommended) ?? drafts[0])!.rowWidths.map((w) => w.width);
     let prev: number[] = [...edge.seamPositions];
     let prev2: number[] = [];
     let acc = 0;
     widths.forEach((w, k) => {
-      const [va, vb] = start ? [-(acc + w), -acc] : [vMin + acc, vMin + acc + w];
+      const [va, vb] = start ? [from - (acc + w), from - acc] : [from + acc, from + acc + w];
       acc += w;
       const rowIndex = start ? -1 - k : rows.length + k;
       const coverage = clipRings([localRect(geom, -BIG, BIG, va, vb)], door.rings).filter(
@@ -322,16 +377,38 @@ function buildPieces(
   bl: Mm,
   bw: Mm,
   doors: Doorways,
+  tabs: readonly EdgeTab[],
 ): Piece[] {
   const pieces: Piece[] = [];
+  /** Join a ripped edge row's full-width stretches across doorways onto a piece. */
+  const withTab = (poly: Ring, u0: Mm, u1: Mm, rowTabs: readonly EdgeTab[]) => {
+    const parts = rowTabs.flatMap((tb) =>
+      clipRings([localRect(geom, u0, u1, tb.vA, tb.vB)], [tb.clear])
+        .filter((r) => Math.abs(ringsArea([r])) > 1)
+        .map((r) => ({ r, door: tb.door.index })),
+    );
+    if (!parts.length) return null;
+    // A local rect is clockwise when the run axis is Y: orient it before joining.
+    const merged = largest(unionRings([ccw(poly), ...parts.map((p) => ccw(p.r))]));
+    if (!merged) return null;
+    const spans = parts
+      .map((p) => localBounds(geom, [p.r]))
+      .map((b) => ({ from: Math.max(b.uMin, u0) - u0, to: Math.min(b.uMax, u1) - u0 }))
+      .sort((a, b) => a.from - b.from);
+    return { poly: merged, spans, opening: parts[0]!.door };
+  };
   for (const row of rows) {
     const v0 = row.crossStart;
     const v1 = v0 + row.rowWidth;
     const vOuter = Math.min(v1, geom.crossWidthEnd); // outer edge stops at the far corner
     const n = row.pieceLengths.length;
+    const rowTabs = tabs.filter((tb) => tb.rowIndex === row.index);
     let u0 = 0;
     row.pieceLengths.forEach((len, j) => {
       const u1 = u0 + len;
+      // The width it is ripped to at each end (a slanted cross-end wall tapers it).
+      const wStart = Math.min(v1, crossWidthAt(geom, u0)) - v0;
+      const wEnd = Math.min(v1, crossWidthAt(geom, Math.min(u1, geom.runLengthEnd))) - v0;
       // A first / last piece reaching into a doorway is its rectangle clipped to
       // the floor with the doorway joined on, measured from the shape it takes.
       const frame = frames[row.index]!;
@@ -349,14 +426,22 @@ function buildPieces(
         // part beyond it: two shapes that merely touch may not merge.
         const floor = unionRings([geom.inner, ...passed.map((d) => d.full)]);
         const poly = largest(clipRings([localRect(geom, u0 - lead, u1 + trail, v0, v1)], floor));
-        if (poly) pieces.push(doorwayPiece(geom, row, j, n, poly, bl, bw, frame, intoLead));
+        const tab = poly ? withTab(poly, u0 - lead, u1 + trail, rowTabs) : null;
+        if (tab)
+          pieces.push({
+            ...doorwayPiece(geom, row, j, n, tab.poly, bl, bw, frame, intoLead),
+            faceLengthShort: undefined,
+            faceWidthNarrow: undefined,
+            narrowAtEnd: undefined,
+            notched: true,
+            doorTab: { spans: tab.spans, ripStart: wStart, ripEnd: wEnd },
+          });
+        else if (poly) pieces.push(doorwayPiece(geom, row, j, n, poly, bl, bw, frame, intoLead));
         u0 = u1;
         return;
       }
       const lenA = Math.min(u1, runLengthAt(geom, v0)) - u0;
       const lenB = Math.min(u1, runLengthAt(geom, vOuter)) - u0;
-      const wStart = Math.min(v1, crossWidthAt(geom, u0)) - v0;
-      const wEnd = Math.min(v1, crossWidthAt(geom, Math.min(u1, geom.runLengthEnd))) - v0;
       const faceLength = Math.max(lenA, lenB);
       const faceWidth = Math.max(wStart, wEnd);
       const faceWidthNarrow = ifDiffers(wStart, wEnd);
@@ -383,6 +468,27 @@ function buildPieces(
 
       const whole = approxEq(lenA, bl) && approxEq(lenB, bl);
       const role = roleAt(j, n, whole);
+      const tab = withTab(poly, u0, u1, rowTabs);
+      if (tab) {
+        const b = localBounds(geom, [tab.poly]);
+        pieces.push({
+          id: `r${row.index}-p${j}`,
+          rowIndex: row.index,
+          indexInRow: j,
+          poly: tab.poly,
+          faceLength: Math.max(faceLength, b.uMax - b.uMin),
+          faceLengthShort: ifDiffers(lenA, lenB),
+          faceWidth: b.vMax - b.vMin,
+          kind: row.isTaper ? "taper" : whole ? "full" : "cut-length",
+          role,
+          isRipped: true,
+          opening: tab.opening,
+          notched: true,
+          doorTab: { spans: tab.spans, ripStart: wStart, ripEnd: wEnd },
+        });
+        u0 = u1;
+        return;
+      }
       pieces.push({
         id: `r${row.index}-p${j}`,
         rowIndex: row.index,
@@ -487,9 +593,10 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: nu
   );
   const rows = buildRows(frames, stagger.startOffsets, board.length);
 
+  const { tabs, thin } = edgeTabs(inputs, geom, rows, doors, board.width);
   const pieces = [
-    ...buildPieces(geom, rows, frames, board.length, board.width, doors),
-    ...doorwayStrips(geom, rows, doors, t, board.length, board.width),
+    ...buildPieces(geom, rows, frames, board.length, board.width, doors, tabs),
+    ...doorwayStrips(geom, rows, doors, tabs, t, board.length, board.width),
   ];
   markUndersized(pieces, t.minPiece, t.minRowWidth);
 
@@ -501,7 +608,7 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: nu
     : undefined;
 
   // Cutting.
-  const cut = assignCuts(demandFromPieces(pieces), board.length, t.kerf);
+  const cut = assignCuts(demandFromPieces(pieces, rows.length), board.length, t.kerf);
   // Attach sources back onto pieces.
   const sourceById = new Map(cut.cutList.map((c) => [c.pieceId, c]));
   for (const p of pieces) {
@@ -532,17 +639,17 @@ export function buildPlanForAxis(inputs: Inputs, runAxis: Axis, optionIndex?: nu
 
   // Validity gate + diagnostics.
   const diagnostics: Diagnostic[] = [];
-  // A doorway strip clicks onto the long edge of the row beside it — impossible
-  // when that edge was ripped off to fit the wall.
-  for (const door of doors.crossSide) {
-    const edge = rows[door.side === "start" ? 0 : rows.length - 1];
-    if (edge?.isRipped)
-      diagnostics.push({
-        severity: "warn",
-        code: "opening.rippedEdge",
-        message: `The row along door ${door.index + 1}'s wall is ripped on the doorway side, so the doorway strip can't click onto it — flip the border row to the other wall, or glue the strip.`,
-      });
-  }
+  // A doorway strip clicks onto the long edge of the row beside it. A ripped
+  // row keeps that edge across the doorway (a full-width stretch) unless the
+  // strip left beyond it would be too thin to lay.
+  for (const { door, strip } of thin)
+    diagnostics.push({
+      severity: "warn",
+      code: "opening.rippedEdge",
+      message: Number.isFinite(strip)
+        ? `The row along door ${door + 1}'s wall is ripped. Keeping it full width across the doorway, so the doorway strip can click onto it, would leave only a ${Math.round(strip)} mm strip — flip the border row to the other wall, or glue the strip to the ripped edge.`
+        : `The row along door ${door + 1}'s wall is ripped on the doorway side, so the doorway strip can't click onto it — glue the strip to the ripped edge.`,
+    });
   const shortest = (p: Piece) => Math.min(p.faceLength, p.faceLengthShort ?? p.faceLength);
   const minPieceLen = pieces.length ? Math.min(...pieces.map(shortest)) : board.length;
   const draftValid = draft.valid;

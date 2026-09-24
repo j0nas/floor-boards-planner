@@ -145,6 +145,68 @@ function chordAt(ring: Ring, runIsX: boolean, fixCross: boolean, at: number): nu
 }
 
 /**
+ * A convex piece's sides, read off its edges: an edge running more along the
+ * board than across it is a long edge (bottom or top, by which way it faces),
+ * the rest are its ends. Each long side's length is its run extent and each
+ * end's width its cross extent — so a long edge that slants slightly (a taper
+ * rip) still measures its full length, and a slanted end its full width.
+ */
+function edgeExtents(ring: Ring, runIsX: boolean) {
+  const u = (p: Point) => (runIsX ? p.x : p.y);
+  const v = (p: Point) => (runIsX ? p.y : p.x);
+  // Winding in (run, cross) coordinates, which mirror room coordinates when run is Y.
+  let twice = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i]!;
+    const b = ring[(i + 1) % ring.length]!;
+    twice += u(a) * v(b) - u(b) * v(a);
+  }
+  const turn = twice >= 0 ? 1 : -1; // outward normal of edge (du, dv) is turn · (dv, −du)
+  const bottom: number[] = [];
+  const top: number[] = [];
+  const start: number[] = [];
+  const end: number[] = [];
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i]!;
+    const b = ring[(i + 1) % ring.length]!;
+    const du = u(b) - u(a);
+    const dv = v(b) - v(a);
+    if (Math.abs(du) < 1e-9 && Math.abs(dv) < 1e-9) continue;
+    if (Math.abs(du) >= Math.abs(dv)) (-du * turn < 0 ? bottom : top).push(u(a), u(b));
+    else (dv * turn < 0 ? start : end).push(v(a), v(b));
+  }
+  const extent = (xs: readonly number[]) => (xs.length ? Math.max(...xs) - Math.min(...xs) : 0);
+  return {
+    lenA: extent(bottom),
+    lenB: extent(top),
+    wStart: extent(start),
+    wEnd: extent(end),
+  };
+}
+
+/**
+ * An L-shaped (notched) piece measured across itself just inside each side of
+ * its bounding box: the length along each long edge and the width at each end.
+ */
+function notchedExtents(
+  ring: Ring,
+  runIsX: boolean,
+  uMin: number,
+  uMax: number,
+  vMin: number,
+  vMax: number,
+) {
+  const du = Math.min(0.05, (uMax - uMin) / 4);
+  const dv = Math.min(0.05, (vMax - vMin) / 4);
+  return {
+    lenA: chordAt(ring, runIsX, true, vMin + dv),
+    lenB: chordAt(ring, runIsX, true, vMax - dv),
+    wStart: chordAt(ring, runIsX, false, uMin + du),
+    wEnd: chordAt(ring, runIsX, false, uMax - du),
+  };
+}
+
+/**
  * Cut dimensions of a clipped piece, the way they are marked on a board: the
  * length along each long edge (they differ where a wall cuts the end at an
  * angle) and the width at each end (they differ where a wall tapers it).
@@ -154,12 +216,9 @@ export function measurePiece(ring: Ring, runIsX: boolean) {
   const [uMin, uMax, vMin, vMax] = runIsX
     ? [b.minX, b.maxX, b.minY, b.maxY]
     : [b.minY, b.maxY, b.minX, b.maxX];
-  const du = Math.min(0.05, (uMax - uMin) / 4);
-  const dv = Math.min(0.05, (vMax - vMin) / 4);
-  const lenA = chordAt(ring, runIsX, true, vMin + dv);
-  const lenB = chordAt(ring, runIsX, true, vMax - dv);
-  const wStart = chordAt(ring, runIsX, false, uMin + du);
-  const wEnd = chordAt(ring, runIsX, false, uMax - du);
+  const { lenA, lenB, wStart, wEnd } = isConvexRing(ring)
+    ? edgeExtents(ring, runIsX)
+    : notchedExtents(ring, runIsX, uMin, uMax, vMin, vMax);
   const faceLength = uMax - uMin;
   const faceWidth = vMax - vMin;
   const shortLen = Math.min(lenA, lenB);

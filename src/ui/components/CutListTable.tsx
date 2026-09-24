@@ -23,6 +23,12 @@ function lengthText(c: CutItem): string {
 
 /** Width, with the width at each end (in laying direction) for a taper rip. */
 function widthText(c: CutItem): string {
+  if (c.doorTab) {
+    const { ripStart, ripEnd, spans } = c.doorTab;
+    const rip = mm(ripStart) === mm(ripEnd) ? mm(ripStart) : `${mm(ripStart)}→${mm(ripEnd)}`;
+    const at = spans.map((s) => `${mm(s.from)}–${mm(s.to)}`).join(", ");
+    return `${rip}, ${mm(c.width)} at ${at}`;
+  }
   if (c.widthNarrow === undefined) return mm(c.width);
   if (c.notched) return `${mm(c.width)} (tab ${mm(c.widthNarrow)})`;
   return c.narrowAtEnd
@@ -34,6 +40,7 @@ function widthText(c: CutItem): string {
 function pieceText(plan: Plan, c: CutItem): string {
   const notch = c.notched ? " · notched" : "";
   if (c.opening === undefined) return roleLabel(c) + notch;
+  if (c.doorTab) return `${roleLabel(c)} · full width across door ${c.opening + 1}`;
   if (rowLabel(plan, c).startsWith("door"))
     return (c.role === "free" ? "doorway strip" : `${roleLabel(c)} · doorway`) + notch;
   return `${roleLabel(c)}${notch} · into door ${c.opening + 1}`;
@@ -44,7 +51,8 @@ export function CutListTable({ plan }: { plan: Plan }) {
   const cuts = plan.cutList.length - fulls;
   const angled = plan.cutList.some((c) => c.lengthShort !== undefined);
   const tapered = plan.cutList.some((c) => c.widthNarrow !== undefined && !c.notched);
-  const notched = plan.cutList.some((c) => c.notched);
+  const notched = plan.cutList.some((c) => c.notched && !c.doorTab);
+  const tabbed = plan.cutList.some((c) => c.doorTab);
   const doors = plan.cutList.some((c) => c.opening !== undefined);
 
   return (
@@ -65,6 +73,9 @@ export function CutListTable({ plan }: { plan: Plan }) {
         {notched
           ? " Notched: L-shaped where it enters a doorway — length along each edge, and the tab's width."
           : ""}
+        {tabbed
+          ? " Full width across a door: the row is ripped, but left whole where it passes the doorway so the doorway strip can click onto its edge — “188, 211 at 1033–1095” is the rip, then where it stays 211 wide, measured from the piece's start end."
+          : ""}
       </p>
       <div className="max-h-72 overflow-auto rounded-md border border-slate-200">
         <table className="w-full text-xs">
@@ -83,11 +94,17 @@ export function CutListTable({ plan }: { plan: Plan }) {
               const partners = boardPartners(plan, c);
               return (
                 <tr key={c.pieceId} className="border-t border-slate-100">
-                  <td className="px-2 py-1 text-left tabular-nums">{rowLabel(plan, c)}</td>
+                  <td className="whitespace-nowrap px-2 py-1 text-left tabular-nums">
+                    {rowLabel(plan, c)}
+                  </td>
                   <td className="px-2 py-1 text-left tabular-nums">{c.indexInRow + 1}</td>
                   <td className="px-2 py-1 text-left">{pieceText(plan, c)}</td>
-                  <td className="px-2 py-1 text-right tabular-nums">{lengthText(c)}</td>
-                  <td className="px-2 py-1 text-right tabular-nums">{widthText(c)}</td>
+                  <td className="whitespace-nowrap px-2 py-1 text-right tabular-nums">
+                    {lengthText(c)}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-1 text-right tabular-nums">
+                    {widthText(c)}
+                  </td>
                   <td className="px-2 py-1 text-left">
                     <span className={c.role === "full" ? "text-slate-400" : "text-slate-700"}>
                       {c.source}

@@ -54,6 +54,9 @@ export function cutListToCsv(plan: Plan): string {
     "offcut_remainder_mm",
     "door",
     "notched",
+    "rip_start_mm",
+    "rip_end_mm",
+    "full_width_along_mm",
   ];
   const round = (v: number | undefined) => (v === undefined ? "" : Math.round(v));
   const lines = plan.cutList.map((c) => {
@@ -73,6 +76,9 @@ export function cutListToCsv(plan: Plan): string {
       r ? Math.round(r.remainder) : "",
       c.opening === undefined ? "" : c.opening + 1,
       c.notched ? "yes" : "",
+      round(c.doorTab?.ripStart),
+      round(c.doorTab?.ripEnd),
+      c.doorTab?.spans.map((sp) => `${Math.round(sp.from)}-${Math.round(sp.to)}`).join(" ") ?? "",
     ]
       .map(csvCell)
       .join(",");

@@ -364,7 +364,7 @@ export function buildPolygonPlan(
     prev = next;
   }
   if (!pieces.length) return null;
-  const demand = demandFromPieces(pieces);
+  const demand = demandFromPieces(pieces, rowWidths.length);
 
   // Pack the cut lengths onto boards with offcut reuse → realistic board count.
   const cut = assignCuts(demand, bl, t.kerf);

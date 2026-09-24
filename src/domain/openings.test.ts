@@ -20,9 +20,10 @@ function withDoors(doors: Opening[], base: Inputs = DEFAULT_INPUTS): Inputs {
 
 const doorPieces = (p: Plan) => p.pieces.filter((q) => q.opening !== undefined);
 
-describe("openings — a doorway beyond the first row (the pantry)", () => {
-  // The pantry laid in 2026-09, with its 704 mm door in the near (door) wall,
-  // 81 mm of floor through the wall to the threshold, 10 mm under each jamb.
+describe("openings — a doorway beyond the first row", () => {
+  // The pantry laid in 2026-09 entered door wall first: its 704 mm door in the
+  // near wall, 81 mm of floor through the wall to the threshold, 10 mm under
+  // each jamb. The first row is a full board, so the strip clicks straight on.
   const pantry = structuredClone(DEFAULT_INPUTS);
   pantry.room = rectRoom({ widthNear: 2887, widthFar: 2880, lengthLeft: 1677, lengthRight: 1675 });
   pantry.board = { length: 2050, width: 211, thickness: 9.5 };
@@ -100,9 +101,57 @@ describe("openings — a doorway at the row ends", () => {
   });
 });
 
+describe("openings — a ripped row keeps full width across its doorway", () => {
+  // The pantry as laid: full rows from the back wall, the door row ripped to fit
+  // along the door wall — but left whole between the jambs, so its factory edge
+  // is there for the doorway strip to click onto.
+  const inputs = withDoors([door(2, 1145.5, 704, 81, 10)]);
+  inputs.room = rectRoom({ widthNear: 2880, widthFar: 2887, lengthLeft: 1675, lengthRight: 1677 });
+  inputs.board = { length: 2050, width: 211, thickness: 9.5 };
+  inputs.gap = { near: 5, far: 5, left: 5, right: 5 };
+  inputs.tunables = { ...inputs.tunables, kerf: 3 };
+  const plan = buildPlanForAxis(inputs, "X");
+  const doorRow = plan.rows.length - 1;
+
+  test("the door row is 211 wide across the clear opening, and ripped elsewhere", () => {
+    expect(plan.rows[doorRow]!.isRipped).toBe(true);
+    const tabbed = plan.pieces.filter((p) => p.doorTab);
+    expect(tabbed.map((p) => p.rowIndex)).toEqual([doorRow, doorRow]);
+    for (const p of tabbed) {
+      expect(p.faceWidth).toBeCloseTo(211, 1);
+      expect(p.doorTab!.ripStart).toBeLessThan(191);
+      expect(p.opening).toBe(0);
+    }
+    // Together they span the clear opening, jamb to jamb.
+    const along = tabbed.flatMap((p) => p.doorTab!.spans).reduce((s, x) => s + x.to - x.from, 0);
+    expect(along).toBeCloseTo(704, 0);
+    expect(plan.diagnostics.some((d) => d.code === "opening.rippedEdge")).toBe(false);
+  });
+
+  test("the doorway strip starts where the full-width stretch ends", () => {
+    const strip = doorPieces(plan).filter((p) => p.rowIndex === plan.rows.length);
+    expect(strip).toHaveLength(1);
+    // 81 through the wall + the 5 mm gap − the 21–23 mm the door row already covers.
+    expect(strip[0]!.faceWidth).toBeCloseTo(64.2, 0);
+    expect(strip[0]!.faceLength).toBeCloseTo(724, 0);
+    expect(plan.valid).toBe(true);
+    expect(checkPlan(inputs, plan)).toEqual([]);
+  });
+
+  test("the door row is numbered with the room's rows; only the strip is fitted last", () => {
+    const board = (id: string) =>
+      Number(plan.cutList.find((c) => c.pieceId === id)!.source.slice(1));
+    const tabBoards = plan.pieces.filter((p) => p.doorTab).map((p) => board(p.id));
+    expect(Math.max(...tabBoards)).toBe(plan.material.boardsConsumed);
+    const strip = doorPieces(plan).find((p) => !p.doorTab)!;
+    expect(plan.cutList.find((c) => c.pieceId === strip.id)!.reused).toBe(true);
+  });
+});
+
 describe("openings — warnings, custom shapes and validation", () => {
-  test("warns when the row beside a doorway strip is ripped on the doorway side", () => {
-    // The default room balances ~119 mm rips against both long walls.
+  test("warns when keeping a ripped row whole across a doorway would leave too thin a strip", () => {
+    // The default room balances ~119 mm rips against both long walls: 92 mm of
+    // full width would leave an 18 mm strip in a 100 mm doorway.
     const i = withDoors([door(0, 1500)]);
     const p = buildPlanForAxis(i, "X");
     expect(p.diagnostics.some((d) => d.code === "opening.rippedEdge")).toBe(true);

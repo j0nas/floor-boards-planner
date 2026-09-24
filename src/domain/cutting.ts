@@ -1,4 +1,4 @@
-import type { CutItem, Piece, PieceKind, PieceRole, ReuseEntry } from "./types.ts";
+import type { CutItem, DoorTab, Piece, PieceKind, PieceRole, ReuseEntry } from "./types.ts";
 import { EPS, type Mm } from "./units.ts";
 
 /** A piece that must be obtained, before a source board/offcut is assigned. */
@@ -13,13 +13,19 @@ export interface DemandPiece {
   narrowAtEnd?: boolean;
   kind: PieceKind;
   role: PieceRole;
-  /** Door opening the piece reaches into — fitted after the room's rows. */
+  /** Door opening the piece reaches into. */
   opening?: number;
   notched?: boolean;
+  doorTab?: DoorTab;
+  /** Lies wholly in a doorway, beyond the room's rows — fitted after them. */
+  last?: boolean;
 }
 
-/** The cut demand for a set of pieces: each needs its length from a board. */
-export function demandFromPieces(pieces: readonly Piece[]): DemandPiece[] {
+/**
+ * The cut demand for a set of pieces: each needs its length from a board. Rows
+ * outside 0…roomRows−1 are doorway rows beyond the room's, fitted last.
+ */
+export function demandFromPieces(pieces: readonly Piece[], roomRows: number): DemandPiece[] {
   return pieces.map((p) => ({
     pieceId: p.id,
     rowIndex: p.rowIndex,
@@ -33,6 +39,8 @@ export function demandFromPieces(pieces: readonly Piece[]): DemandPiece[] {
     role: p.role,
     opening: p.opening,
     notched: p.notched,
+    doorTab: p.doorTab,
+    last: p.opening !== undefined && (p.rowIndex < 0 || p.rowIndex >= roomRows),
   }));
 }
 
@@ -53,7 +61,7 @@ interface Stock {
 
 /** Laying order: the room row by row, then doorway pieces (fitted last). */
 function layOrder(a: DemandPiece, b: DemandPiece): number {
-  const door = (d: DemandPiece) => (d.opening === undefined ? 0 : 1);
+  const door = (d: DemandPiece) => (d.last ? 1 : 0);
   return door(a) - door(b) || a.rowIndex - b.rowIndex || a.indexInRow - b.indexInRow;
 }
 
@@ -145,6 +153,7 @@ export function assignCuts(demand: readonly DemandPiece[], bl: Mm, kerf: Mm): Cu
         reused: j > 0,
         ...(d.opening === undefined ? {} : { opening: d.opening }),
         ...(d.notched ? { notched: true } : {}),
+        ...(d.doorTab ? { doorTab: d.doorTab } : {}),
       });
       if (j > 0)
         reuseMap.push({
